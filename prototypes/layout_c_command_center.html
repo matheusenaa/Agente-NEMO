@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Layout C — Command Center (protótipo NEMO IDE)</title>
+<link rel="stylesheet" href="proto.css" />
+<style>
+  .app{display:flex;flex-direction:column;gap:10px;padding:12px;height:100%}
+  .toprow{display:flex;gap:10px}
+  .brandbar{display:flex;align-items:center;gap:12px;background:var(--bg1);border:1px solid var(--border);border-radius:12px;padding:10px 16px;flex:1}
+  .logo{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:19px;background:linear-gradient(135deg,#14171f,#1d212c);border:1.5px solid var(--red)}
+  .search{flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:9px 12px;font-size:13px;color:var(--text);display:flex;align-items:center;gap:8px}
+  .cmdchips{display:flex;gap:8px}
+  .chip{background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:6px 12px;font-size:11px;color:var(--text2);cursor:pointer}
+
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;min-height:0}
+  .card{background:var(--bg1);border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px;transition:all .3s;position:relative;overflow:hidden}
+  .card.live{border-color:rgba(0,180,255,.5);box-shadow:0 0 0 1px rgba(0,180,255,.15),0 8px 30px rgba(0,180,255,.08)}
+  .card .top{display:flex;align-items:center;gap:10px}
+  .card h3{font-size:14px}
+  .card p{font-size:11px;color:var(--text3);line-height:1.5;flex:1}
+
+  .midsplit{display:grid;grid-template-columns:1.6fr 1fr;gap:10px;min-height:0;flex:1}
+  .chatcnt{display:flex;flex-direction:column;background:var(--bg1);border:1px solid var(--border);border-radius:12px;overflow:hidden;min-width:0}
+  .msgs{flex:1;overflow:hidden;display:flex;flex-direction:column}
+  .msg.demo-off{display:none}
+  .tasksbar{display:flex;flex-direction:column;gap:8px;background:var(--bg1);border:1px solid var(--border);border-radius:12px;padding:12px;min-width:0}
+  .taskline{display:flex;align-items:center;gap:10px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+  .taskline .bar{flex:1}
+  .idle{opacity:.55}
+</style>
+</head>
+<body>
+<button class="replay" onclick="NEMODemo.start()">↻ Repetir demo</button>
+<div class="note">LAYOUT C · COMMAND CENTER · ~18s</div>
+
+<div class="app" data-demo="app">
+  <div class="toprow">
+    <div class="brandbar">
+      <div class="logo">🐟</div>
+      <b>NEMO IDE</b><span class="cs" style="font-size:11px">· command center</span>
+      <div class="search">⌕  procurar agentes, tarefas, arquivos…</div>
+      <div class="cmdchips">
+        <span class="chip">/tarefas</span><span class="chip">/arquivos</span><span class="chip">/relatório</span>
+        <span class="badge act" data-demo="agentStatus">🟢 NEMO online</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card live" data-demo="agentItem">
+      <div class="top"><div class="avatar nemo">🐟</div><div><h3>NEMO</h3><div style="font-size:11px;color:var(--green)">● coordenando</div></div></div>
+      <p>Assistente e orquestrador — interpreta a demanda, delega e valida o resultado final.</p>
+      <span class="badge act" data-demo="agent2Status">→ analisando planilha</span>
+    </div>
+    <div class="card" data-demo="agent2">
+      <div class="top"><div class="avatar" style="background:#12303f">📊</div><div><h3>DATA</h3><div style="font-size:11px;color:var(--accent)">● processando…</div></div></div>
+      <p>Análise, SAS, Power BI — transforma dados brutos em entendimento.</p>
+      <div class="bar"><i class="v" data-demo="progress" style="display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,var(--accent),var(--accent2));width:0%"></i></div>
+    </div>
+    <div class="card idle"><div class="top"><div class="avatar" style="background:#243047">💻</div><div><h3>DEV</h3><div style="font-size:11px;color:var(--text3)">● ocioso</div></div></div><p>Desenvolvimento e revisão de código.</p></div>
+    <div class="card idle"><div class="top"><div class="avatar" style="background:#2c2630">💰</div><div><h3>FINANCE</h3><div style="font-size:11px;color:var(--text3)">● ocioso</div></div></div><p>Finanças e organização pessoal.</p></div>
+  </div>
+
+  <div class="midsplit">
+    <div class="chatcnt">
+      <div style="padding:10px 14px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px">Chat &nbsp;<span class="badge act">🐟 NEMO</span></div>
+      <div class="msgs">
+        <div class="msg" data-demo="msgA">
+          <div class="avatar nemo">🐟</div><div class="body"><div class="meta"><span class="who">NEMO</span><span class="time">09:12</span></div><div class="bubble">Bom dia! 👋 Central ativa. O que vamos resolver?</div></div>
+        </div>
+        <div class="msg demo-off" data-demo="msgU" style="justify-content:flex-end;padding-left:70px">
+          <div class="body"><div class="meta" style="justify-content:flex-end"><span class="who">Você</span><span class="time">09:13</span></div><div class="bubble user">Analise a planilha de gastos e encontre duplicados.</div></div>
+        </div>
+        <div class="msg demo-off" data-demo="msgB-2">
+          <div class="avatar nemo">🐟</div><div class="body"><div class="meta"><span class="who">NEMO</span><span class="time">09:13</span></div><div class="bubble" data-demo="reply"></div></div>
+        </div>
+        <div class="msg demo-off" data-demo="msgB-3">
+          <div class="avatar nemo">🐟</div><div class="body"><div class="meta"><span class="who">NEMO</span><span class="time">09:14</span></div><div class="bubble"><span class="check">✓ 2 tarefas concluídas</span> — planilha corrigida e exportada</div></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--border)">
+        <div class="in" data-demo="input" style="flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--text)">Digite uma mensagem ou use um comando…</div>
+        <button class="sendbtn" style="width:40px;border:none;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#001018">➤</button>
+      </div>
+    </div>
+
+    <div class="tasksbar">
+      <div class="label">TAREFAS · EM TEMPO REAL</div>
+      <div class="taskline"><span>🔴</span><b>Corrigir duplicada</b><div class="bar"><i style="width:0%" data-demo="t1"></i></div><span class="cs">DATA</span></div>
+      <div class="taskline"><span>🟠</span><b>Recalcular total</b><div class="bar"><i style="width:0%" data-demo="t2"></i></div><span class="cs">DATA</span></div>
+      <div class="taskline idle"><span>🟡</span><b>Exportar XLSX</b><div class="bar"><i style="width:0%"></i></div><span class="cs">NEMO</span></div>
+      <div class="pane" style="padding:10px">
+        <div class="label">📜 LOGS</div>
+        <div style="font-family:Consolas,monospace;font-size:11px;color:var(--text2);line-height:1.8;margin-top:6px">
+          <div><span class="ok">→</span> NEMO: “delegando análise para DATA”</div>
+          <div><span class="ok">✓</span> duplicata linha 12 corrigida</div>
+          <div><span class="ok">✓</span> total R$ 2.847,90</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" data-demo="toast"><span>🐟</span> NEMO executou a tarefa: <b>planilha corrigida</b> ✓</div>
+<div class="waves"></div>
+<script src="proto-demo.js"></script>
+</body>
+</html>

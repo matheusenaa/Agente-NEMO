@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Layout D — AI Workspace (protótipo NEMO IDE)</title>
+<link rel="stylesheet" href="proto.css" />
+<style>
+  body{background:radial-gradient(1000px 500px at 50% -10%,#0b2033 0%,var(--bg0) 60%)}
+  .app{position:fixed;inset:0;display:flex;flex-direction:column;padding:14px;transition:none}
+  .pbar{display:flex;align-items:center;gap:12px;padding-bottom:12px}
+  .logo{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:17px;background:linear-gradient(135deg,#14171f,#1d212c);border:1.5px solid var(--red)}
+  .grow{flex:1}
+  .pchip{background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:5px 12px;font-size:11px;color:var(--text2)}
+
+  .stage{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;position:relative}
+  .bubble2{width:min(540px,88%);background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:16px 18px;box-shadow:0 20px 60px rgba(0,0,0,.5);transition:all .4s;position:relative}
+  .bubble2.big{width:min(620px,92%)}
+  .hb{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .why{height:12px;border-radius:8px;background:var(--bg3);margin:8px 0;width:100%;animation:shimmer 2.2s infinite;background:linear-gradient(90deg,var(--bg3) 40%,#24314a 50%,var(--bg3) 60%);background-size:200% 100%}
+  .why.w30{width:30%}.why.w60{width:60%}.why.w80{width:80%}
+  .why.reveal{animation:none;background:var(--bg3);opacity:0;transition:opacity .3s}
+  .why.reveal.on{opacity:1}
+
+  .sidenav{position:absolute;left:-8px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:8px;transition:all .4s;opacity:.4}
+  .sidenav .ic{width:40px;height:40px;border-radius:12px;background:var(--bg2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:17px}
+  .sidenav.on{opacity:1;left:12px}
+  .sidenav .ic.on{background:var(--bg3);border-color:rgba(0,180,255,.5);animation:glow 2s infinite}
+
+  .toolbar{position:absolute;right:-8px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:8px;opacity:.4;transition:all .4s}
+  .toolbar.on{opacity:1;right:12px}
+  .toolbar .ic{width:40px;height:40px;border-radius:12px;background:var(--bg2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px}
+
+  .dock{display:flex;gap:10px;justify-content:center;padding:14px 0 4px}
+  .dockcell{width:72px;border-radius:14px;background:var(--bg2);border:1px solid var(--border);padding:8px;display:flex;flex-direction:column;align-items:center;gap:6px;font-size:10px;color:var(--text3);cursor:pointer;transition:all .3s;opacity:.5}
+  .dockcell.on{opacity:1;border-color:rgba(0,180,255,.5);transform:translateY(-3px)}
+  .msg.demo-off{display:none}
+</style>
+</head>
+<body>
+<button class="replay" onclick="NEMODemo.start()">↻ Repetir demo</button>
+<div class="note">LAYOUT D · AI WORKSPACE · ~18s</div>
+
+<div class="app" data-demo="app">
+  <div class="pbar">
+    <div class="logo">🐟</div>
+    <b style="font-size:13px">NEMO</b>
+    <div class="grow"></div>
+    <span class="pchip" data-demo="agentStatus">🟢 online</span>
+    <span class="pchip">tema: dark ocean</span>
+  </div>
+
+  <div class="stage">
+    <div class="sidenav" data-demo="sn">
+      <div class="ic on" data-demo="snChat">💬</div>
+      <div class="ic" data-demo="snFiles">📁</div>
+      <div class="ic">⚙️</div>
+    </div>
+
+    <div class="bubble2" data-demo="bubble">
+      <div class="hb">
+        <div class="avatar nemo" data-demo="whoA">🐟</div>
+        <div><b style="font-size:14px">NEMO</b><div style="font-size:11px;color:var(--text3)">coordenador · <span data-demo="whoA2">🟢 online</span></div></div>
+      </div>
+
+      <div class="body" style="min-height:58px">
+        <div><b>NEMO</b> <span style="color:var(--text2);font-size:12px">· Bom dia! 👋 Sou o coordenador. O que vamos resolver hoje?</span></div>
+        <div class="why w80"></div><div class="why w60"></div><div class="why w30"></div>
+      </div>
+    </div>
+
+    <div class="inputbar" style="position:absolute;bottom:90px;left:50%;transform:translateX(-50%);width:min(620px,88%)">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:12px 16px;font-size:13px;color:var(--text);box-shadow:0 12px 40px rgba(0,0,0,.5)" data-demo="input">💬 mensagem para NEMO… <span class="caret">&nbsp;</span></div>
+    </div>
+  </div>
+
+  <div class="dock">
+    <div class="dockcell">💬 Chat</div>
+    <div class="dockcell" data-demo="fileBar">📁 Workspace</div>
+    <div class="dockcell">📊 Agentes</div>
+    <div class="dockcell">⚙️ Prefs</div>
+  </div>
+</div>
+
+<div class="toast" data-demo="toast"><span>🐟</span> Tarefa concluída: <b>planilha corrigida</b> ✓</div>
+<div class="waves"></div>
+<script src="proto-demo.js"></script>
+</body>
+</html>

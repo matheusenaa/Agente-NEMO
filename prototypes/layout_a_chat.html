@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Layout A — Chat Central (protótipo NEMO IDE)</title>
+<link rel="stylesheet" href="proto.css" />
+<style>
+  body{background:radial-gradient(1200px 600px at 80% -10%,#0d2233 0%,var(--bg0) 55%)}
+  .app{display:grid;grid-template-columns:210px 1fr 260px;gap:10px;padding:12px;width:100%;height:100%}
+
+  /* sidebar esquerda */
+  .rails{display:flex;flex-direction:column;gap:10px;width:210px}
+  .brand{display:flex;align-items:center;gap:10px;padding:12px 12px;background:var(--bg1);border:1px solid var(--border);border-radius:12px}
+  .logo{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;background:linear-gradient(135deg,#14171f,#1d212c);border:1.5px solid var(--red)}
+  .brand b{font-size:14px;letter-spacing:.6px}
+  .brand .xt{display:block;font-size:10px;color:var(--text3)}
+
+  .agents{flex:1;background:var(--bg1);border:1px solid var(--border);border-radius:12px;padding:8px;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:2px}
+
+  /* central */
+  .center{display:flex;flex-direction:column;background:var(--bg1);border:1px solid var(--border);border-radius:12px;overflow:hidden;min-width:0;position:relative}
+  .chathead{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--border)}
+  .chathead b{font-size:14px}
+  .micheck b span{color:var(--accent)}
+  .msgs{flex:1;overflow:hidden;display:flex;flex-direction:column}
+  .msg.demo-off{display:none}
+  .working{display:none;align-items:center;gap:8px;padding:8px 12px;color:var(--text2);font-size:12px;background:rgba(0,180,255,.06);border-top:1px solid var(--border)}
+  .working.show{display:flex}
+  .spinner{width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:ring .8s linear infinite}
+  .inputbar{display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--border)}
+  .inputbar .in{flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--text);min-height:20px}
+  .sendbtn{width:38px;border:none;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#001018;font-size:16px;cursor:pointer}
+
+  /* painel direito */
+  .ctx{display:flex;flex-direction:column;gap:10px;width:260px;font-size:12px}
+  .ctx .pane{padding:10px 12px}
+  .ctx ul{list-style:none}
+  .ctx li{padding:5px 0;display:flex;align-items:center;gap:8px;color:var(--text2)}
+  .ctx li b{color:var(--text)}
+  .fileRow{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;background:var(--bg2);margin-top:6px}
+  .fileRow .fv{font-family:Consolas,monospace;font-size:11px;color:var(--text2)}
+  .fileView{display:none}
+  .fileView.show{display:block}
+  .tasks li .badge{opacity:0;transition:opacity .4s}
+  .tasks li .badge.show{opacity:1}
+  .logs{font-family:Consolas,monospace;font-size:11px;color:var(--text2);line-height:1.7}
+  .logs .ok{color:var(--green)} .logs .wa{color:var(--amber)}
+
+  .note{position:fixed;right:14px;bottom:14px;z-index:70;font-size:11px;color:var(--text3);background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:6px 10px}
+</style>
+</head>
+<body>
+<button class="replay" onclick="NEMODemo.start()">↻ Repetir demo</button>
+<div class="note">LAYOUT A · CHAT CENTRAL · ~18s</div>
+
+<div class="app" data-demo="app">
+  <!-- rails esquerda -->
+  <div class="rails">
+    <div class="brand"><div class="logo">🐟</div><div><b>NEMO IDE</b><span class="xt">AI WORKSPACE</span></div></div>
+    <div class="agents">
+      <div class="label" style="padding:4px 6px 8px">Agentes</div>
+      <div class="agent sel" data-demo="agentItem">
+        <div class="avatar nemo">🐟</div>
+        <div style="flex:1"><div class="aname">NEMO</div><div class="arole">Coordenador</div></div>
+        <span class="badge act" data-demo="agentStatus">🟢 Online</span>
+      </div>
+      <div class="agent" data-demo="agent2">
+        <div class="avatar" style="background:#12303f">📊</div>
+        <div style="flex:1"><div class="aname">DATA</div><div class="arole">Análise de dados</div></div>
+        <span class="badge" data-demo="agent2Status">🟢</span>
+      </div>
+      <div class="agent"><div class="avatar" style="background:#243047">💻</div><div style="flex:1"><div class="aname">DEV</div><div class="arole">Desenvolvimento</div></div><span class="badge">🟢</span></div>
+      <div class="agent"><div class="avatar" style="background:#2c2630">💰</div><div style="flex:1"><div class="aname">FINANCE</div><div class="arole">Finanças</div></div><span class="badge">🟢</span></div>
+      <div class="agent"><div class="avatar" style="background:#412929">📋</div><div style="flex:1"><div class="aname">ADMIN</div><div class="arole">Administração</div></div><span class="badge act">🟢</span></div>
+    </div>
+  </div>
+
+  <!-- chat central -->
+  <div class="center">
+    <div class="chathead">
+      <div class="avatar nemo" style="width:30px;height:30px">🐟</div>
+      <div style="flex:1"><b>NEMO</b> <span class="cs">· coordenador</span></div>
+      <span class="badge act">● analisando 3 itens</span>
+    </div>
+    <div class="msgs">
+      <div class="msg" data-demo="msgA" style="align-self:flex-start">
+        <div class="avatar nemo">🐟</div>
+        <div class="body">
+          <div class="meta"><span class="who" data-demo="whoA">🐟 NEMO</span><span class="time">09:12</span><span class="badge act">🟢 Online</span></div>
+          <div class="bubble"><b>NEMO</b> · Bom dia! 👋 Sou o coordenador da sua equipe. Quer analisar dados, montar um relatório ou resolver algo na IDE?</div>
+        </div>
+      </div>
+
+      <div class="msg demo-off" data-demo="msgU" style="align-self:flex-end;padding-left:60px">
+        <div class="body">
+          <div class="meta" style="justify-content:flex-end"><span class="who" data-demo="whoU">Você</span><span class="time">09:13</span></div>
+          <div class="bubble user">Analise a planilha de gastos e encontre duplicados…</div>
+        </div>
+      </div>
+
+      <div class="msg demo-off" data-demo="msgB-1">
+        <div class="avatar nemo">🐟</div>
+        <div class="body">
+          <div class="meta"><span class="who">🐟 NEMO</span><span class="time">09:13</span><span class="dot work"></span></div>
+          <div class="bubble"><div class="status"><span>🔎 Investigando...</span><span class="phrase"></span><span class="typingbar"></span></div></div>
+        </div>
+      </div>
+
+      <div class="msg demo-off" data-demo="msgB-2">
+        <div class="avatar nemo">🐟</div>
+        <div class="body">
+          <div class="meta"><span class="who">🐟 NEMO</span><span class="time">09:13</span></div>
+          <div class="bubble" data-demo="reply"></div>
+        </div>
+      </div>
+
+      <div class="msg demo-off" data-demo="msgB-3">
+        <div class="avatar nemo">🐟</div>
+        <div class="body">
+          <div class="meta"><span class="who">🐟 NEMO</span><span class="time">09:14</span></div>
+          <div class="bubble"><span class="check">✓ Corrigido</span> · <span class="check">✓ Testado</span> · <span class="check">✓ Relatório pronto</span><br/><span style="color:var(--text2)">Total recalculado: R$ 2.847,90. Arquivo exportado em <span style="font-family:Consolas">gastos-setembro.xlsx</span>.</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="working" data-demo="working">
+      <span class="spinner"></span>
+      <span>NEMO está trabalhando…</span>
+      <span class="status" data-demo="phrase" style="margin-left:auto"></span>
+    </div>
+
+    <div class="inputbar">
+      <div class="in" data-demo="input">Digite uma mensagem… ⚡ /tarefas /arquivos <span class="caret">&nbsp;</span></div>
+      <button class="sendbtn">➤</button>
+    </div>
+  </div>
+
+  <!-- painel de contexto -->
+  <div class="ctx">
+    <div class="pane">
+      <div class="label">📁 Projeto</div>
+      <ul>
+        <li><span>📂</span> dashboard/<b>src</b></li>
+        <li><span>⚙️</span> agents/ · skills/ · squads/</li>
+        <li><span>🔌</span> openrouter_client.py <span class="cs">· API ativa</span></li>
+      </ul>
+      <div class="label" style="margin-top:10px">Arquivos abertos</div>
+      <div class="fileRow">
+        <span>📊</span><div class="fv">gastos-setembro.xlsx <span class="check">(aberto)</span></div>
+      </div>
+    </div>
+
+    <div class="pane">
+      <div class="label" data-demo="tasksCheck">Tasks</div>
+      <ul class="tasks">
+        <li>🔴 <b>Corrigir duplicata</b> <span class="badge act demo-off" data-demo="checkRow">✓</span></li>
+        <li>🟠 <b>Recalcular total</b> <span class="badge act demo-off" data-demo="checkRow">✓</span></li>
+        <li>🟡 Exportar XLSX <span class="badge">…</span></li>
+      </ul>
+    </div>
+
+    <div class="pane">
+      <div class="label">📜 Logs</div>
+      <div class="logs">
+        <div><span class="wa">→</span> NEMO: analisando gastos-setembro.xlsx</div>
+        <div><span class="ok">✓</span> duplicata detectada (linha 12)</div>
+        <div><span class="ok">✓</span> total recalculado</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" data-demo="toast"><span>🐟</span> NEMO concluiu: <b>planilha corrigida</b> · dados conferidos</div>
+<div class="waves"></div>
+<script src="proto-demo.js"></script>
+</body>
+</html>

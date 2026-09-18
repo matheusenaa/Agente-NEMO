@@ -1,0 +1,85 @@
+/* Protótipos NEMO IDE — folha compartilhada */
+
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden;font-family:"Segoe UI","JetBrains Mono",system-ui,sans-serif;background:#07090f;color:#e8ecf5}
+
+:root{
+  --bg0:#07090f;--bg1:#0c1017;--bg2:#121824;--bg3:#1a2233;--border:#1f2a3d;
+  --text:#e8ecf5;--text2:#9aa7bd;--text3:#6b7890;
+  --accent:#00b4ff;--accent2:#00e0c6;--red:#e8355c;--amber:#ffb020;--green:#2ee06a;
+  --vasco:#c8102e;
+}
+
+/* ---- reutilizáveis ---- */
+.dot{width:9px;height:9px;border-radius:50%;background:var(--text3);display:inline-block}
+.dot.on{background:var(--green);animation:pulse 1.6s infinite}
+.dot.work{background:var(--accent);animation:pulse 1.2s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.8)}}
+@keyframes pop{0%{opacity:0;transform:translateY(14px) scale(.97)}100%{opacity:1;transform:none}}
+@keyframes fade{0%{opacity:0}100%{opacity:1}}
+@keyframes slideL{0%{opacity:0;transform:translateX(-16px)}100%{opacity:1;transform:none}}
+@keyframes slideR{0%{opacity:0;transform:translateX(16px)}100%{opacity:1;transform:none}}
+@keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+@keyframes glow{0%,100%{box-shadow:0 0 0 rgba(0,180,255,0)}50%{box-shadow:0 0 18px rgba(0,180,255,.35)}}
+@keyframes caret{0%,49%{border-right-color:#fff}50%,100%{border-right-color:transparent}}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+@keyframes ring{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
+
+.app{position:fixed;inset:0;opacity:0;transform:scale(.985);transition:opacity .5s,transform .5s}
+.app.open{opacity:1;transform:none}
+
+/* panes genéricas */
+.pane{background:var(--bg1);border:1px solid var(--border);border-radius:12px}
+.label{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text3);font-weight:600}
+
+/* agent row */
+.agent{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer;transition:background .2s}
+.agent.sel{background:var(--bg3);box-shadow:inset 0 0 0 1px var(--border)}
+.avatar{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0;animation:breathe 3s infinite}
+.avatar.nemo{background:linear-gradient(135deg,#14171f,#1d212c);border:1.5px solid var(--red);box-shadow:0 0 12px rgba(200,16,46,.25)}
+.avatar.nemo::after{content:"×";position:absolute;color:rgba(255,255,255,.14);font-weight:700;font-size:22px}
+.avatar.small{width:28px;height:28px;font-size:14px;border-radius:8px}
+.aname{font-size:13px;font-weight:600;line-height:1.2}
+.arole{font-size:11px;color:var(--text3)}
+
+/* message bubbles */
+.msg{display:flex;gap:10px;margin:10px 12px;align-items:flex-start;animation:pop .4s ease both}
+.msg .body{flex:1;min-width:0;max-width:760px}
+.msg .meta{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+.msg .who{font-size:13px;font-weight:700}
+.msg .time{font-size:11px;color:var(--text3)}
+.bubble{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.55;color:var(--text)}
+.bubble.user{background:#0e3a4a;border-color:#145470}
+.bubble .status{display:flex;align-items:center;gap:8px;color:var(--text2);font-size:12px}
+.status .phrase{color:var(--text3);font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px}
+.typingbar{display:inline-block;width:26px;height:3px;border-radius:2px;background:linear-gradient(90deg,var(--accent),var(--accent2));margin-left:8px;animation:shimmer 1.4s infinite;background-size:200% 100%}
+.caret{display:inline-block;border-right:2px solid #fff;padding-right:2px;animation:caret 1s steps(1) infinite}
+
+.check{color:var(--green)}
+hillo{color:var(--accent);font-weight:600}
+
+/* toasts */
+.toast{position:fixed;right:18px;top:16px;display:flex;align-items:center;gap:10px;background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--green);border-radius:10px;padding:10px 14px;font-size:13px;opacity:0;transform:translateX(30px);transition:all .35s;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.toast.show{opacity:1;transform:none}
+
+/* terminal */
+.term{background:#07090f;border:1px solid var(--border);border-radius:10px;font-family:Consolas,monospace;font-size:12px;color:#cde3f5;padding:10px 12px;overflow:hidden}
+.term .p1{color:var(--green)} .term .p2{color:var(--accent)}
+.term .linew{border-right:2px solid #fff;animation:caret 1s infinite}
+span.cs{color:var(--text3)}
+
+/* progress */
+.bar{height:6px;border-radius:4px;background:var(--bg3);overflow:hidden;position:relative}
+.bar i{display:block;height:100%;width:0;border-radius:4px;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .5s}
+
+/* buttons de replay */
+.replay{position:fixed;left:16px;bottom:14px;z-index:80;background:var(--bg2);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:8px 14px;font-size:12px;cursor:pointer;transition:all .2s}
+.replay:hover{border-color:var(--accent);color:var(--accent)}
+body:not(.running) .hint{opacity:0}
+
+.badge{font-size:10px;border-radius:20px;padding:2px 8px;background:var(--bg3);color:var(--text2);border:1px solid var(--border)}
+.badge.act{background:rgba(46,224,106,.12);color:var(--green);border-color:rgba(46,224,106,.35)}
+.badge.sel{background:rgba(0,180,255,.12);color:var(--accent);border-color:rgba(0,180,255,.4)}
+
+.waves{position:absolute;left:0;right:0;bottom:0;height:90px;pointer-events:none;opacity:.12;background:repeating-radial-gradient(ellipse at 50% 120%,transparent 0 26px,rgba(0,180,255,.5) 27px 28px)}

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Layout B — IDE Profissional (protótipo NEMO IDE)</title>
+<link rel="stylesheet" href="proto.css" />
+<style>
+  .app{display:grid;grid-template-rows:44px 1fr 190px;height:100%;padding:10px;gap:8px}
+  .topbar{display:flex;align-items:center;gap:14px;background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:0 12px}
+  .topbar .ttabs{display:flex;gap:4px;height:100%;align-items:center}
+  .ttab{padding:6px 12px;border-radius:8px;font-size:12px;color:var(--text2);cursor:pointer}
+  .ttab.on{background:var(--bg3);color:var(--accent)}
+  .main{display:grid;grid-template-columns:190px 1fr 300px;gap:8px;min-height:0}
+
+  .sbar{display:flex;flex-direction:column;gap:8px;background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:8px}
+  .menu{display:flex;flex-direction:column;gap:2px;font-size:12px}
+  .menu i{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;color:var(--text2);font-style:normal;cursor:pointer}
+  .menu i.on{background:var(--bg3);color:var(--accent)}
+
+  .editor{display:flex;flex-direction:column;background:var(--bg1);border:1px solid var(--border);border-radius:10px;overflow:hidden;min-width:0}
+  .edtabs{display:flex;align-items:center;gap:2px;background:var(--bg0);padding:0 6px;border-bottom:1px solid var(--border);font-size:12px}
+  .edtab{display:flex;align-items:center;gap:6px;padding:7px 12px;color:var(--text2);border-bottom:2px solid transparent;cursor:pointer}
+  .edtab.on{color:var(--accent);border-bottom-color:var(--accent)}
+  .edbody{flex:1;display:flex;min-height:0}
+  .gutter{width:44px;background:var(--bg0);color:var(--text3);font-family:Consolas,monospace;font-size:12px;line-height:1.6;padding:10px 8px;text-align:right;border-right:1px solid var(--border)}
+  .code{flex:1;background:var(--bg0);color:#d7e6f5;font-family:Consolas,monospace;font-size:12px;line-height:1.6;padding:10px 14px;white-space:pre;overflow:auto}
+  .code .k{color:#7dd3fc}.code .f{color:#fcd34d}.code .s{color:#86efac}.code .c{color:#64748b}.code .n{color:#f9a8d4}
+  .fileView{display:none}.fileView.show{display:block}
+
+  .chatp{display:flex;flex-direction:column;background:var(--bg1);border:1px solid var(--border);border-radius:10px;overflow:hidden;min-width:0}
+  .chatp .chathead{border-bottom:1px solid var(--border);padding:10px 12px;display:flex;align-items:center;gap:10px}
+  .msgs{flex:1;overflow:hidden;display:flex;flex-direction:column;font-size:12px}
+  .msg.demo-off{display:none}
+  .bubble{font-size:12px}
+  .term{flex:1}
+  .termlines{font-family:Consolas,monospace;font-size:11px;line-height:1.7}
+  .bar{width:160px}
+</style>
+</head>
+<body>
+<button class="replay" onclick="NEMODemo.start()">↻ Repetir demo</button>
+<div class="note">LAYOUT B · IDE PROFISSIONAL · ~18s</div>
+
+<div class="app" data-demo="app">
+  <div class="topbar">
+    <b style="color:var(--text);font-size:13px">🐟 NEMO IDE</b>
+    <div class="ttabs">
+      <span class="ttab">Chat</span><span class="ttab on">Editor</span><span class="ttab">Terminal</span><span class="ttab">Tasks</span>
+    </div>
+    <div style="margin-left:auto;display:flex;gap:10px;align-items:center">
+      <span class="badge act" data-demo="agentStatus">🟢 Online</span>
+      <span class="dot work"></span>
+    </div>
+  </div>
+
+  <div class="main">
+    <!-- agentes -->
+    <div class="sbar">
+      <div class="label" style="padding:2px 4px 6px">Agentes</div>
+      <div class="menu">
+        <i class="on" data-demo="agentItem"><span class="avatar small" style="background:linear-gradient(135deg,#14171f,#1d212c);border:1px solid var(--red)">🐟</span>NEMO</i>
+        <i data-demo="agent2"><span class="avatar small" style="background:#12303f">📊</span>DATA</i>
+        <i><span class="avatar small" style="background:#243047">💻</span>DEV</i>
+        <i><span class="avatar small" style="background:#412929">📋</span>ADMIN</i>
+      </div>
+      <div class="label" style="padding:12px 4px 6px">Explorador</div>
+      <div class="menu">
+        <i>📄 dashboard/src</i>
+        <i>🤖 agents/ (11)</i>
+        <i>🔌 skills/ (12)</i>
+        <i>🚀 squads/</i>
+      </div>
+      <div style="margin-top:auto;padding:4px"><div class="bar"><i style="width:66%"></i></div><div style="font-size:10px;color:var(--text3);margin-top:4px">memória · 66%</div></div>
+    </div>
+
+    <!-- editor central -->
+    <div class="editor">
+      <div class="edtabs">
+        <span class="edtab on" data-demo="fileBar">📊 gastos-setembro.xlsx</span>
+        <span class="edtab">🐟 nemo.agent.md</span>
+      </div>
+      <div class="edbody">
+        <div class="gutter" data-demo="gutter">1<br/>2<br/>3<br/>4<br/>5<br/>6<br/>7<br/>8<br/>9<br/>10<br/>11<br/>12<br/>13<br/>14<br/>15<br/>16<br/>17<br/>18<br/>19<br/>20<br/>21<br/>22</div>
+        <div class="code" data-demo="fileView"><span class="c">// cruzamento de bases — relatório NEMO duplicados</span>
+<span class="k">def</span> <span class="f">detect_duplicates</span>(df):
+    <span class="n">dup</span> = df[df[memo_keeps('valor','descricao')]]
+    <span class="c"># linha 12: pedágio R$ 18,00 duplicado → corrigido</span>
+    <span class="k">return</span> dup, <span class="sc">'total'</span>(<span class="n">R$ 2.847,90</span>)
+
+<span class="k">for</span> row <span class="k">in</span> <span class="f">sanity</span>(rows):
+    <span class="c"># validação: 3 lançamentos sem descrição pendentes</span>
+    log.info(<span class="s">"✓ duplicatas corrigidas"</span>)</div>
+      </div>
+    </div>
+
+    <!-- chat lateral direito -->
+    <div class="chatp">
+      <div class="chathead"><div class="avatar small" style="background:linear-gradient(135deg,#14171f,#1d212c);border:1px solid var(--red)">🐟</div><div style="flex:1"><b style="font-size:12px">NEMO</b></div><span class="badge act" data-demo="agent2Status">🟢</span></div>
+      <div class="msgs">
+        <div class="msg" data-demo="msgA" style="padding:6px">
+          <div class="avatar small" style="background:linear-gradient(135deg,#14171f,#1d212c);border:1px solid var(--red)">🐟</div>
+          <div class="body"><div class="meta"><span class="who">NEMO</span><span class="time">09:12</span></div><div class="bubble">Bom dia! 👋 O que vamos resolver hoje?</div></div>
+        </div>
+        <div class="msg demo-off" data-demo="msgU" style="padding:6px;justify-content:flex-end">
+          <div class="body"><div class="meta" style="justify-content:flex-end"><span class="who">Você</span><span class="time">09:13</span></div><div class="bubble user">Analise a planilha de gastos e encontre duplicados.</div></div>
+        </div>
+        <div class="msg demo-off" data-demo="msgB-2" style="padding:6px">
+          <div class="avatar small" style="background:linear-gradient(135deg,#14171f,#1d212c);border:1px solid var(--red)">🐟</div>
+          <div class="body"><div class="meta"><span class="who">NEMO</span><span class="time">09:13</span></div><div class="bubble" data-demo="reply"></div></div>
+        </div>
+        <div class="msg demo-off" data-demo="msgB-3" style="padding:6px">
+          <div class="avatar small" style="background:linear-gradient(135deg,#14171f,#1d212c);border:1px solid var(--red)">🐟</div>
+          <div class="body"><div class="meta"><span class="who">NEMO</span><span class="time">09:14</span></div><div class="bubble"><span class="check">✓ corrigido</span> · <span class="check">✓ testado</span> · exportado em <span style="font-family:Consolas">gastos-setembro.xlsx</span></div></div>
+        </div>
+      </div>
+      <div class="inputbar" style="display:flex;gap:6px;padding:8px">
+        <div class="in" data-demo="input" style="flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:12px;color:var(--text)">💬 mensagem…</div>
+        <button class="sendbtn" style="width:32px;border:none;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent2))">➤</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- terminal inferior -->
+  <div class="term" style="display:flex;flex-direction:column;gap:4px">
+    <div style="display:flex;gap:10px;font-size:11px;color:var(--text3)">
+      <span>⚙️ TERMINAL</span><span>|</span><span>📜 LOGS</span><span style="margin-left:auto" data-demo="agentStatus2" class="badge act">● ativo</span>
+    </div>
+    <div class="termlines">
+      <div><span class="p1">nemo@ide</span> <span class="p2">~</span> <span class="linew">python analise.py gastos-setembro.xlsx</span></div>
+      <div><span class="cs">→ duplicata linha 12 detectada</span></div>
+      <div><span class="cs">→ total recalculado: <span style="color:var(--green)">R$ 2.847,90</span> ✓</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" data-demo="toast"><span>🐟</span> NEMO concluiu a análise ✓ · arquivo exportado</div>
+<div class="waves"></div>
+<script src="proto-demo.js"></script>
+</body>
+</html>
