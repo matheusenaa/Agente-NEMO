@@ -11,6 +11,7 @@ export default defineConfig({
     },
   },
   server: {
+    host: "0.0.0.0",
     proxy: {
       // Backend NEMO (FastAPI) — python nemo_server.py
       "/api/nemo": {
