@@ -58,6 +58,8 @@ class OpenRouterClient:
             base_url=self.base_url,
             api_key=self.api_key if self.api_key else "dummy_key_for_init",
             default_headers=self.default_headers,
+            timeout=120.0,
+            max_retries=2,
         )
 
         # Cache do catálogo de modelos ativos do OpenRouter
@@ -188,6 +190,7 @@ class OpenRouterClient:
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    timeout=120.0,
                 )
                 latency_ms = (time.perf_counter() - start_time) * 1000
 

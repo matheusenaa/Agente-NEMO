@@ -25,6 +25,18 @@ Uso:
 
 from __future__ import annotations
 
+import io
+import sys
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+try:
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 import argparse
 import json
 import os
@@ -306,12 +318,24 @@ def _squads_snapshot() -> Dict[str, Any]:
                 if yaml_path.is_file():
                     parsed = yaml.safe_load(yaml_path.read_text(encoding="utf-8", errors="replace"))
                     s = parsed.get("squad") if isinstance(parsed, dict) else None
+                    if not isinstance(s, dict):
+                        # YAML "flat": os metadados do squad ficam na raiz (opencore style)
+                        s = parsed
                     if isinstance(s, dict):
                         code = s.get("code") or code
                         name = s.get("name") or name
                         description = s.get("description") or description
                         icon = s.get("icon") or icon
                         agents = s.get("agents") if isinstance(s.get("agents"), list) else []
+                        # fallback: monta agentes a partir de squad-party.csv
+                        if not agents:
+                            csv_path = entry / "squad-party.csv"
+                            if csv_path.is_file():
+                                agents = [
+                                    line.split(",")[1].strip() if "," in line else line.strip()
+                                    for line in csv_path.read_text(encoding="utf-8", errors="replace").splitlines()[1:]
+                                    if line.strip() and not line.strip().startswith("#")
+                                ]
             except Exception:
                 pass
             squads.append({
