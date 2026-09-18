@@ -1,109 +1,133 @@
-# NEMO • Integração Multi-Modelo OpenRouter (Python)
+# NEMO — IDE de Agentes de IA
 
-Ambiente Python modular, resiliente e pronto para produção para consumo dos 10 principais modelos de IA disponíveis no [OpenRouter](https://openrouter.ai/).
+**NEMO** é o seu **coordenador pessoal de agentes de IA** com identidade visual de **Vasco da Gama** 🔵⚪ (o time adversário não aparece 👀).
+
+Ele orquestra uma equipe especializada de agentes (cada um com personalidade, modelo padrão no OpenRouter e fallbacks automáticos) construída **por você, para o seu trabalho real**: finanças, dados, pesquisa, redação, revisão, design, vídeo, redes sociais, SEO e publicação.
+
+> ✌️ Duas formas de uso (ambas funcionam juntas):
+> - **Chat + Escritório 2D** no dashboard React (Phaser)
+> - **Chat pela IDE/terminal** no backend FastAPI
 
 ---
 
-## Estrutura do Projeto
+## 🗺️ Visão geral
 
 ```
 NEMO/
-├── .env                  # Arquivo com as variáveis de ambiente locais (sua chave de API)
-├── .env.example          # Modelo de configuração das variáveis de ambiente
-├── requirements.txt      # Dependências (openai, python-dotenv, requests, aiohttp, rich, pydantic)
-├── models_config.py      # Configuração dos 10 modelos com metadados e fallbacks ativos
-├── openrouter_client.py  # Cliente modular de integração com OpenRouter
-├── test_openrouter.py    # Script CLI de validação e teste com relatórios visuais
-├── test_client_unit.py   # Testes unitários automatizados
-└── README.md             # Esta documentação
+├── nemo_server.py              # Backend FastAPI (porta 8798) — chat, arquivos, terminal, snapshot
+├── openrouter_client.py        # Cliente OpenRouter (chat, modelos, fallbacks)
+├── models_config.py            # Configuração dos modelos com fallbacks
+├── agents_config.py            # Configuração dos agentes (roster)
+├── agents/*.agent.md           # Personas completas de cada agente
+├── requirements.txt
+├── .env.example
+├── test_client_unit.py         # Testes unitários do backend
+└── dashboard/                  # Frontend — a IDE NEMO
+    ├── index.html
+    ├── vite.config.ts          # alias @ + proxy /api/nemo
+    └── src/
+        ├── main.tsx / App.tsx / AppShell.tsx
+        ├── api/nemo.ts         # Cliente HTTP do backend
+        ├── store/              # useIdeStore (zustand), store do quclube, squads
+        ├── data/               # agentes, temas, status/frases, agentes config
+        ├── hooks/              # useNemoChat, useSquadSocket, useSquads
+        ├── office/             # Cena Phaser do escritório 2D
+        ├── components/ide/     # AppShell, TopBar, AgentSidebar, ChatView,
+        │                       #   CodeEditor, FileExplorer, TerminalView,
+        │                       #   TasksView, HistoryView, SettingsView,
+        │                       #   ContextPanel, NotificationsLayer, OfficeView
+        ├── lib/                # renderMarkdown, syntax highlighting, id
+        └── styles/             # globals.css, themes.css, ide.css
 ```
 
 ---
 
-## 1. Configuração da Chave de API
+## 🚀 Como rodar
 
-1. Obtenha sua chave no painel do OpenRouter: [openrouter.ai/keys](https://openrouter.ai/keys)
-2. Abra o arquivo `.env` e configure sua chave:
-   ```env
-   OPENROUTER_API_KEY=sk-or-v1-sua_chave_completa_aqui
-   OPENROUTER_HTTP_REFERER=http://localhost:3000
-   OPENROUTER_APP_TITLE=NEMO AI Studio
-   ```
+### 1. Backend (Python)
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+# chave da API (opcional — sem ela, respostas ficam em modo offline)
+Copy-Item .env.example .env
+# edite o .env com sua OPENROUTER_API_KEY
+
+python nemo_server.py
+```
+
+O servidor sobe em `http://127.0.0.1:8798` e expõe: `/api/nemo/health`, `/api/nemo/chat`, `/api/nemo/files`, `/api/nemo/file`, `/api/nemo/file/save`, `/api/nemo/terminal`, `/api/nemo/models`, `/api/nemo/snapshot`.
+
+> **Sem `OPENROUTER_API_KEY`**: o chat responde com um aviso amigável e funcionam todas as telas da IDE (arquivos, terminal, tasks, escritório). Com a chave, o NEMO conversa de verdade via OpenRouter.
+
+### 2. Dashboard (IDE)
+
+```powershell
+cd dashboard
+npm install
+npm run dev        # http://localhost:5173 (proxy /api/nemo → 8798)
+```
+
+Build de produção: `npm run build` (gera `dashboard/dist/`).
 
 ---
 
-## 2. Modelos Configurados e Mapeamento de Slugs
+## 🧭 A IDE
 
-| # | Provedor | Modelo | Slug Primário Solicitado | Slug Efetivo / Fallback Ativo |
-|---|----------|--------|-------------------------|------------------------------|
-| 1 | Anthropic | Claude 3.5 Sonnet | `anthropic/claude-3.5-sonnet` | `anthropic/claude-sonnet-4` |
-| 2 | OpenAI | GPT-4o | `openai/gpt-4o` | `openai/gpt-4o` (Exato) |
-| 3 | OpenAI | GPT-4o Mini | `openai/gpt-4o-mini` | `openai/gpt-4o-mini` (Exato) |
-| 4 | Google | Gemini Flash 1.5 | `google/gemini-flash-1.5` | `google/gemini-2.5-flash` |
-| 5 | Google | Gemini Pro 1.5 | `google/gemini-pro-1.5` | `google/gemini-2.5-pro` |
-| 6 | Meta | Llama 3.1 70B Instruct | `meta-llama/llama-3.1-70b-instruct` | `meta-llama/llama-3.1-70b-instruct` (Exato) |
-| 7 | Meta | Llama 3.1 405B Instruct | `meta-llama/llama-3.1-405b-instruct` | `nousresearch/hermes-3-llama-3.1-405b` |
-| 8 | Mistral | Mixtral 8x22B Instruct | `mistralai/mixtral-8x22b-instruct` | `mistralai/mixtral-8x22b-instruct` (Exato) |
-| 9 | DeepSeek | DeepSeek Chat / Coder | `deepseek/deepseek-chat` | `deepseek/deepseek-chat` (Exato) |
-| 10 | Qwen | Qwen 2.5 72B Instruct | `qwen/qwen-2.5-72b-instruct` | `qwen/qwen-2.5-72b-instruct` (Exato) |
-
----
-
-## 3. Como Executar os Testes
-
-### A. Validação dos 10 Modelos (Chamadas Reais de LLM)
-Após inserir sua chave no `.env`:
-```powershell
-python test_openrouter.py
-```
-
-### B. Validação do Catálogo ao Vivo (Não Consome Créditos)
-Verifica o catálogo ao vivo com 400+ modelos e a integridade de rotas:
-```powershell
-python test_openrouter.py --catalog-only
-```
-
-### C. Teste de um Modelo Individual
-```powershell
-python test_openrouter.py --model gpt-4o
-python test_openrouter.py --model claude-3.5-sonnet
-```
-
-### D. Envio de Prompt Customizado
-```powershell
-python test_openrouter.py --prompt "Escreva um haicai sobre inteligência artificial"
-```
-
-### E. Execução dos Testes Unitários Automatizados
-```powershell
-python -m unittest test_client_unit.py
-```
+- **TopBar** — abas de view (Chat, Workspace, Escritório, Terminal, Tasks, Histórico, Config), botões de painéis (esquerda/direita/inferior), sino de notificações, badge de tasks e perfil.
+- **AgentSidebar** (esquerda, colapsável) — rosters dos agentes com ícone, nome, cargo e **status ao vivo** + **squads ativos**.
+- **ChatView** — mensagens em bubbles com ícone do agente, timestamps, **estado "typing" com status rotativos** e frases engraçadas, editor de mensagem com sugestões.
+- **OfficeView** (Escritório) — cena Phaser 2D com a equipe em mesas, estados visuais (idle/pensando/trabalhando/entregando) e seletor de squads.
+- **WorkspaceView** — explorador de arquivos (navegação por breadcrumbs) + editor com abas, highlight de sintaxe (Python, TS/JS, JSON, YAML, CSS, HTML, shell, markdown), line numbers, sujar/salvar.
+- **TerminalView** — painel inferior com abas ⌨️ Terminal / 🪵 Logs / ▶ Exec; execução segura com confirmação para comandos destrutivos.
+- **TasksView** — tarefas com prioridades, adição rápida e progresso.
+- **HistoryView** — histórico de ações (chat/file/terminal/task/config) com busca e filtro por tipo.
+- **SettingsView** — **5 temas** (Ocean, Vasco, Cyber, Midnight, Graphite), 4 densidades, tamanho de fonte, animações, factory reset.
+- **ContextPanel** (direita, colapsável) — contexto ao vivo: agente ativo + frase, squads conexão, tasks em aberto, arquivos abertos, logs recentes.
+- **NotificationsLayer** — toasts com auto-dismiss, com painel de notificações no topo.
+- Tudo persistido em `localStorage` (`nemo-ide`) + histórico/logs no estado.
 
 ---
 
-## 4. Exemplo de Uso no Código Python
+## 🤖 Agentes
 
-```python
-from openrouter_client import OpenRouterClient
-from models_config import get_model_by_id
+| Agente | Nome | Papel |
+|--------|------|-------|
+| 🐟 **NEMO** | Nemo | Assistente & Coordenador da equipe |
+| 📊 Análisys | Ana | Analista de dados |
+| 🔍 Rebeca | — | Pesquisadora |
+| ✍️ Clara | — | Redatora |
+| ✅ Vera | — | Revisora de qualidade |
+| 🎨 Duda | — | Designer de slides/visuais |
+| 🎬 Miguel | — | Criador de vídeo |
+| 🎯 Igor | — | Estrategista de conteúdo |
+| 📱 Sofia | — | Gestora de redes sociais |
+| 📤 Paula | — | Editora & publicadora |
+| 🔎 Otto | — | Especialista em SEO |
 
-# Inicializa cliente (lê automaticamente do .env)
-client = OpenRouterClient()
+Cada agente tem **modelo padrão + fallbacks** (ex.: `openai/gpt-4o` → `anthropic/claude-3.5-sonnet` → `openai/gpt-4o-mini`). As personas completas estão em `agents/*.agent.md`.
 
-# Chamada direta
-result = client.chat_completion(
-    model="openai/gpt-4o",
-    messages=[
-        {"role": "system", "content": "Você é um assistente técnico de alto nível."},
-        {"role": "user", "content": "Explique o conceito de microserviços em 1 frase."}
-    ],
-    temperature=0.7
-)
+---
 
-if result.success:
-    print(f"Modelo: {result.model_used}")
-    print(f"Latência: {result.latency_ms} ms")
-    print(f"Resposta: {result.content}")
-else:
-    print(f"Erro: {result.error_message}")
+## 🧪 Testes
+
+```powershell
+# Backend (unit)
+python -m pytest test_client_unit.py -q
+# ou
+python test_client_unit.py
+
+# Frontend
+cd dashboard
+npm run build    # type-check (tsc -b) + build
 ```
+
+---
+
+## 📝 Notas de ambiente
+
+- **Windows PowerShell** exibe UTF-8 como mojibake (`n�o`) no console — as respostas HTTP estão corretas; o problema é só o console.
+- **Python custom fuera do projeto** pode não adicionar o CWD ao `sys.path`; rode os scripts pela raiz do projeto ou insira o caminho manualmente.
+- **Fallback de modelos**: se o modelo padrão falhar (rate limit / indisponível), o backend troca automaticamente para o fallback configurado.

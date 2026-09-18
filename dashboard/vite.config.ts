@@ -10,4 +10,13 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  server: {
+    proxy: {
+      // Backend NEMO (FastAPI) — python nemo_server.py
+      "/api/nemo": {
+        target: "http://127.0.0.1:8798",
+        changeOrigin: true,
+      },
+    },
+  },
 });
