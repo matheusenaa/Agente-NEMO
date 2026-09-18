@@ -1,0 +1,36 @@
+# Secrets
+.env
+
+# Sensitive / heavy binaries
+opencode.exe
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env.*
+!.env.example
+
+# Node
+node_modules/
+
+# Logs & temp
+_opensquad/logs/
+_opensquad/.opensquad-version
+_opensquad/_memory/
+logs/
+*.log
+*.tmp
+
+# Test results
+dashboard/test-results/
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Output data (squad artifacts)
+squads/**/output/**/*.pdf
+squads/**/output/**/*.xlsx
+squads/**/output/**/*.pbit

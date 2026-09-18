@@ -1,0 +1,6 @@
+openai>=1.50.0
+python-dotenv>=1.0.1
+requests>=2.32.0
+aiohttp>=3.10.0
+rich>=13.8.0
+pydantic>=2.9.0

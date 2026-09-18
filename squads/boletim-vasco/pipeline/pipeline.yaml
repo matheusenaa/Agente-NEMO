@@ -1,0 +1,29 @@
+steps:
+  - file: steps/step-01-checkpoint-foco.md
+  - file: steps/step-02-coletar-dados-rodada.md
+  - file: steps/step-03-consolidar-dados.md
+  - file: steps/step-04-redigir-boletim.md
+  - file: steps/step-05-revisar-boletim.md
+  - file: steps/step-06-checkpoint-aprovacao.md
+  - file: steps/step-07-gerar-artefatos.md
+  - file: steps/step-08-checkpoint-final.md
+
+checkpoints:
+  - step: 1
+    name: "checkpoint-foco"
+  - step: 6
+    name: "checkpoint-aprovacao"
+  - step: 8
+    name: "checkpoint-final"
+
+agents:
+  - id: pesquisador
+    path: agents/pesquisador.agent.md
+  - id: analista
+    path: agents/analista.agent.md
+  - id: redator
+    path: agents/redator.agent.md
+  - id: editor-publicador
+    path: agents/editor-publicador.agent.md
+  - id: revisor
+    path: agents/revisor.agent.md

@@ -1,0 +1,7 @@
+# Squad Party — Boletim Vasco
+# Format: id, name, role, path
+pesquisador,Rebeca Referência,Pesquisadora de Dados,./agents/pesquisador.agent.md
+analista,Ana Análise,Analista de Dados,./agents/analista.agent.md
+redator,Clara Copy,Redatora Analítica,./agents/redator.agent.md
+editor-publicador,Paula Publicação,Editora e Executora,./agents/editor-publicador.agent.md
+revisor,Vera Veredito,Revisora de Qualidade,./agents/revisor.agent.md

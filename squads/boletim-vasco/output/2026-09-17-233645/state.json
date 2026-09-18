@@ -1,0 +1,21 @@
+{
+  "squad": "boletim-vasco",
+  "status": "completed",
+  "step": { "current": 8, "total": 8, "label": "Checkpoint Final" },
+  "agents": [
+    { "id": "pesquisador", "name": "Rebeca Referência", "icon": "🔍", "status": "done", "desk": { "col": 1, "row": 1 } },
+    { "id": "analista", "name": "Ana Análise", "icon": "📊", "status": "done", "desk": { "col": 2, "row": 1 } },
+    { "id": "redator", "name": "Clara Copy", "icon": "✍️", "status": "done", "desk": { "col": 3, "row": 1 } },
+    { "id": "editor-publicador", "name": "Paula Publicação", "icon": "📤", "status": "done", "desk": { "col": 1, "row": 2 } },
+    { "id": "revisor", "name": "Vera Veredito", "icon": "✅", "status": "done", "desk": { "col": 2, "row": 2 } }
+  ],
+  "handoff": {
+    "from": "editor-publicador",
+    "to": "checkpoint-final",
+    "message": "Rodada encerrada: PDF + XLSX + PBIT gerados, memória e runs atualizados, Power BI Desktop instalado.",
+    "completedAt": "2026-09-18T00:00:00Z"
+  },
+  "startedAt": "2026-09-17T23:36:45Z",
+  "updatedAt": "2026-09-18T00:00:00Z",
+  "completedAt": "2026-09-18T00:00:00Z"
+}

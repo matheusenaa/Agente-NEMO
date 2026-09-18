@@ -1,0 +1,22 @@
+name: "Boletim Vasco"
+code: "boletim-vasco"
+description: "Boletim analítico do Vasco da Gama ao fim de cada rodada do Brasileirão, entregue em PDF, XLSX e PBIX (Power BI)."
+
+company:
+  name: "NEMO"
+  tone: "Direto, objetivo, proativo, transparente e técnico"
+  products: "Assistência digital pessoal — análise de dados, Power BI, relatórios"
+
+language: "pt-BR"
+
+data:
+  - pipeline/data/research-brief.md
+  - pipeline/data/domain-framework.md
+  - pipeline/data/quality-criteria.md
+  - pipeline/data/output-examples.md
+  - pipeline/data/anti-patterns.md
+  - pipeline/data/tone-of-voice.md
+
+skills:
+  - web_search
+  - web_fetch

@@ -1,0 +1,32 @@
+squad_code: "boletim-vasco"
+purpose: "Boletim do Vasco da Gama ao fim de cada rodada do Brasileirão, com resultado, tabela e classificação, estatísticas consolidadas, prévia da próxima rodada e análise comentada, entregue em PDF, XLSX e PBIX (Power BI)."
+domain: "mixed"
+
+company:
+  name: "NEMO"
+  tone: "Analítico e seco, direto, objetivo, com toque técnico"
+  products: "Assistência digital pessoal (agenda, finanças, administrativo, arquivos, SAS, Python, Power BI, projetos, pesquisa)"
+
+language: "pt-BR"
+
+context:
+  audience: "Uso pessoal 1:1 (Veggeti) — torcedor vascaíno"
+  output_formats: "PDF + XLSX + PBIX (Power BI)"
+  sections:
+    - "Resultado da rodada"
+    - "Tabela e classificação"
+    - "Estatísticas consolidadas"
+    - "Prévia da próxima rodada"
+    - "Análise e comentário"
+  tone: "Analítico e seco"
+  trigger: "Automático por rodada"
+  scope: "Completo — dashboard Power BI com abas Rodada, Tabela, Histórico e Prévia; arquivos em 'boletim-vasco-brasileirao-2026'"
+
+tools_needed:
+  - "web_search"
+  - "web_fetch"
+
+investigation:
+  enabled: false
+
+target_formats: []
