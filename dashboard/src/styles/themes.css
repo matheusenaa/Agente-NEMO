@@ -1,0 +1,149 @@
+/* ============================================================
+   NEMO IDE — Temas
+   Trocáveis em tempo real via body[data-theme]
+   ============================================================ */
+
+:root {
+  --bg0: #07080f;
+  --bg1: #0e1118;
+  --bg2: #141824;
+  --bg3: #1d2432;
+  --bg4: #252e40;
+  --border: #1e2633;
+  --border2: #2c3646;
+  --text: #e7ecf5;
+  --text2: #a3aec2;
+  --text3: #67748c;
+  --accent: #00b4ff;
+  --accent2: #00e0c6;
+  --accentText: #9fe6ff;
+  --danger: #e8355c;
+  --success: #2ee06a;
+  --warn: #ffb020;
+  --code-bg: #0b0e16;
+  --chip-bg: #1a212e;
+  --scrollbar: #28303f;
+  --brand-grad: linear-gradient(120deg, #00b4ff, #00e0c6);
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --paper: #0d111a;
+}
+
+body[data-theme="vasco"] {
+  --bg0: #0a0809;
+  --bg1: #120e10;
+  --bg2: #1a1316;
+  --bg3: #251a1e;
+  --bg4: #32202a;
+  --border: #2a1b20;
+  --border2: #3d2530;
+  --text: #f2ece9;
+  --text2: #b8a9ad;
+  --text3: #7d6a70;
+  --accent: #ff4d6d;
+  --accent2: #e8355c;
+  --accentText: #ffd1da;
+  --danger: #c8102e;
+  --success: #38d98a;
+  --warn: #ffb020;
+  --code-bg: #0d0a0d;
+  --chip-bg: #221619;
+  --scrollbar: #3a262d;
+  --brand-grad: linear-gradient(120deg, #c8102e, #ff4d6d);
+  --shadow: 0 10px 30px rgba(200, 16, 46, 0.16);
+  --paper: #141013;
+}
+
+body[data-theme="cyber"] {
+  --bg0: #03060d;
+  --bg1: #090d18;
+  --bg2: #10172a;
+  --bg3: #18233c;
+  --bg4: #21304f;
+  --border: #16233d;
+  --border2: #243758;
+  --text: #e5f3ff;
+  --text2: #9fb6d8;
+  --text3: #5f76a0;
+  --accent: #00e5ff;
+  --accent2: #b44dff;
+  --accentText: #b9f0ff;
+  --danger: #ff2e88;
+  --success: #39ff8b;
+  --warn: #ffe14a;
+  --code-bg: #070b15;
+  --chip-bg: #111a2e;
+  --scrollbar: #1e2c4a;
+  --brand-grad: linear-gradient(120deg, #00e5ff, #b44dff);
+  --shadow: 0 10px 40px rgba(0, 229, 255, 0.12);
+  --paper: #0b101e;
+}
+
+body[data-theme="midnight"] {
+  --bg0: #0a0812;
+  --bg1: #100d1c;
+  --bg2: #181430;
+  --bg3: #221c42;
+  --bg4: #2d2553;
+  --border: #241d40;
+  --border2: #332a58;
+  --text: #eceaf8;
+  --text2: #aca6d0;
+  --text3: #6a6391;
+  --accent: #a78bfa;
+  --accent2: #6d5ce0;
+  --accentText: #ddd2ff;
+  --danger: #ff5c7a;
+  --success: #5eead4;
+  --warn: #fbbf24;
+  --code-bg: #0c0917;
+  --chip-bg: #1a1533;
+  --scrollbar: #35295f;
+  --brand-grad: linear-gradient(120deg, #8b5cf6, #22d3ee);
+  --shadow: 0 10px 34px rgba(139, 92, 246, 0.18);
+  --paper: #110e20;
+}
+
+body[data-theme="graphite"] {
+  --bg0: #0c0d0f;
+  --bg1: #131416;
+  --bg2: #1a1c1f;
+  --bg3: #23262a;
+  --bg4: #2c3035;
+  --border: #26282c;
+  --border2: #34373b;
+  --text: #eceef1;
+  --text2: #a8adb5;
+  --text3: #6b7078;
+  --accent: #9ca3af;
+  --accent2: #e5e7eb;
+  --accentText: #d6dade;
+  --danger: #ef4444;
+  --success: #22c55e;
+  --warn: #f59e0b;
+  --code-bg: #0f1012;
+  --chip-bg: #1d1f23;
+  --scrollbar: #33363b;
+  --brand-grad: linear-gradient(120deg, #d6d9df, #f3f4f6);
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  --paper: #131416;
+}
+
+/* recomputa neutros por tema */
+body[data-theme] { background: var(--bg0); color: var(--text); }
+
+/* ============================================================
+   Compatibilidade — variáveis usadas pelos componentes legados
+   (SquadCard, StatusBadge, StatusBar, PhaserGame, SquadSelector)
+   ============================================================ */
+:root,
+body[data-theme] {
+  --bg-primary: var(--bg0);
+  --bg-secondary: var(--bg2);
+  --bg-sidebar: var(--bg1);
+  --text-primary: var(--text);
+  --text-secondary: var(--text2);
+  --accent-cyan: var(--accent);
+  --accent-green: var(--success);
+  --accent-amber: var(--warn);
+  --accent-red: var(--danger);
+}
