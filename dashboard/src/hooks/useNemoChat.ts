@@ -29,7 +29,7 @@ export function useNemoChat() {
       const agent = getAgent(agentId);
       addUserMessage(content);
       addLog({ tone: "agent", agentId, text: `${agent.name} iniciou: ${content.slice(0, 70)}` });
-      addHistory({ kind: "chat", title: agent.name, detail: content.slice(0, 120) });
+      addHistory({ kind: "chat", title: agent.name, agentId: agent.id, detail: content.slice(0, 120) });
 
       setLiveStatus({ agentId, busy: true, label: "🧠 Pensando...", phrase: "" });
       const thinkLabels = ["🧠 Pensando...", "🔎 Investigando...", "📂 Lendo arquivos...", "💻 Codificando..."];

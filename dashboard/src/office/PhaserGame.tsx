@@ -50,12 +50,12 @@ export function PhaserGame() {
     };
   }, []);
 
-  // Bridge React state → Phaser scene
+  // Bridge React state → Phaser scene (emite estado inicial + mudanças)
   useEffect(() => {
-    return useSquadStore.subscribe((state) => {
+    const emit = (state: ReturnType<typeof useSquadStore.getState>) => {
       const game = gameRef.current;
       if (!game) return;
-      const scene = game.scene.getScene('OfficeScene') as OfficeScene | null;
+      const scene = game.scene.getScene("OfficeScene") as OfficeScene | null;
       if (!scene || !scene.scene.isActive()) return;
 
       const selectedSquad = state.selectedSquad;
@@ -63,8 +63,30 @@ export function PhaserGame() {
         ? state.activeStates.get(selectedSquad) ?? null
         : null;
 
-      scene.events.emit('stateUpdate', squadState);
+      scene.events.emit("stateUpdate", squadState);
+    };
+
+    // Estado inicial (ex.: squad já ativo ao montar a cena)
+    emit(useSquadStore.getState());
+
+    const unsubscribeEffect = useSquadStore.subscribe((state) => {
+      emit(state);
     });
+
+    // Re-emite após a cena Phaser terminar de criar (estado inicial não chega antes)
+    const reShot = setInterval(() => {
+      const game = gameRef.current;
+      const scene = game?.scene.getScene("OfficeScene") as OfficeScene | null;
+      if (scene?.scene.isActive()) {
+        emit(useSquadStore.getState());
+        clearInterval(reShot);
+      }
+    }, 300);
+
+    return () => {
+      clearInterval(reShot);
+      unsubscribeEffect();
+    };
   }, []);
 
   return (

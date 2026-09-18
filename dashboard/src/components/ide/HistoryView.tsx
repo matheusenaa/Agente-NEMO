@@ -24,7 +24,8 @@ export function HistoryView() {
 
   const apply = (h: (typeof history)[number]) => {
     if (h.kind === "chat") {
-      setActiveAgent(h.title === "nemo" ? "nemo" : h.title);
+      const agentId = h.agentId ?? h.title;
+      setActiveAgent(agentId === "nemo" || agentId === "Nemo" ? "nemo" : agentId);
       setView("chat");
     } else if (h.kind === "file") {
       setView("workspace");
@@ -57,7 +58,7 @@ export function HistoryView() {
         )}
 
         {filtered.map((h) => {
-          const agent = h.kind === "chat" ? getAgent(h.title) : undefined;
+          const agent = h.kind === "chat" ? getAgent(h.agentId ?? h.title) : undefined;
           return (
             <div key={h.id} className="hist-row" onClick={() => apply(h)} style={{ cursor: "pointer" }} title="Reabrir">
               <span className="ht">{new Date(h.time).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}</span>

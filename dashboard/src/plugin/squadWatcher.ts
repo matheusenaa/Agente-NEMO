@@ -38,14 +38,17 @@ async function discoverSquads(squadsDir: string): Promise<SquadInfo[]> {
     try {
       const raw = await fsp.readFile(yamlPath, "utf-8");
       const parsed = parseYaml(raw);
-      const s = parsed?.squad;
-      if (s) {
+      const s = parsed?.squad ?? parsed;
+      if (s && typeof s === "object") {
+        const rec = s as Record<string, unknown>;
         squads.push({
-          code: typeof s.code === "string" ? s.code : entry.name,
-          name: typeof s.name === "string" ? s.name : entry.name,
-          description: typeof s.description === "string" ? s.description : "",
-          icon: typeof s.icon === "string" ? s.icon : "\u{1F4CB}",
-          agents: Array.isArray(s.agents) ? (s.agents as unknown[]).filter((a): a is string => typeof a === "string") : [],
+          code: typeof rec.code === "string" ? rec.code : entry.name,
+          name: typeof rec.name === "string" ? rec.name : entry.name,
+          description: typeof rec.description === "string" ? rec.description : "",
+          icon: typeof rec.icon === "string" ? rec.icon : (parsed?.squad ? "\u{1F4CB}" : "\u{1F4D1}"),
+          agents: Array.isArray(rec.agents)
+            ? (rec.agents as unknown[]).filter((a): a is string => typeof a === "string")
+            : [],
         });
         continue;
       }

@@ -16,7 +16,9 @@ function assignCharacters(agents: Agent[]): Map<string, CharacterName> {
   let femaleIndex = 0;
 
   for (const agent of agents) {
-    if (agent.gender === 'male') {
+    // Sem campo gender (state.json do pipeline não o emite), alterna masculino/feminino
+    const useMale = agent.gender === "male" || (agent.gender === undefined && maleIndex <= femaleIndex);
+    if (useMale) {
       assignments.set(agent.id, MALE_CHARACTERS[maleIndex % MALE_CHARACTERS.length]);
       maleIndex++;
     } else {

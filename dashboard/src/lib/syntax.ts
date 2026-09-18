@@ -26,7 +26,7 @@ const TOKENIZERS: Record<string, (src: string) => string> = {
       .replace(/(#.*)$/gm, `<span class="tok-c">$1</span>`)
       .replace(/^([A-Za-z_][\w-]*)(\s*:)/gm, `<span class="tok-k">$1</span>$2`)
       .replace(/(["'].*?["'])/g, `<span class="tok-s">$1</span>`)
-      .replace(/-\s+([A-Za-z_])/g, `- <span class="tok-v">$1`),
+      .replace(/-\s+([A-Za-z0-9_][\w.-]*)/g, `- <span class="tok-v">$1</span>`),
   css: (s) =>
     s
       .replace(/(\/\*.*?\*\/)/gs, `<span class="tok-c">$1</span>`)
@@ -37,7 +37,7 @@ const TOKENIZERS: Record<string, (src: string) => string> = {
     s
       .replace(/(&lt;!--.*?--&gt;)/gs, `<span class="tok-c">$1</span>`)
       .replace(/&lt;(\/?)\s*([A-Za-z][\w-]*)/g, `&lt;$1<span class="tok-t">$2</span>`)
-      .replace(/([A-Za-z-]+)=&quot;.*?&quot;/g, `<span class="tok-f">$1</span>=&quot;<span class="tok-s">$2</span>&quot;`),
+      .replace(/([A-Za-z-]+)=&quot;(.*?)&quot;/g, `<span class="tok-f">$1</span>=&quot;<span class="tok-s">$2</span>&quot;`),
   sh: (s) =>
     s
       .replace(/(#.*)$/gm, `<span class="tok-c">$1</span>`)

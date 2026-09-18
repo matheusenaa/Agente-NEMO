@@ -49,7 +49,7 @@ export function FileExplorer() {
   }
 
   const crumbs = workspacePath ? workspacePath.split(/[/\\]/).filter(Boolean) : [];
-  const goCrumb = (idx: number) => load(crumbs.slice(0, idx + 1).join("\\"));
+  const goCrumb = (idx: number) => load(crumbs.slice(0, idx + 1).join("/"));
 
   return (
     <div className="file-tree">

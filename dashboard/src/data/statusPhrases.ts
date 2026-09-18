@@ -51,5 +51,6 @@ export const FUNNY_PHRASES: string[] = [
 
 export function pickPhrase(pool: string[], avoid?: string): string {
   const candidates = pool.filter((p) => p !== avoid);
-  return candidates[Math.floor(Math.random() * candidates.length)];
+  const source = candidates.length > 0 ? candidates : pool;
+  return source[Math.floor(Math.random() * source.length)];
 }

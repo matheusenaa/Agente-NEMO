@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useIdeStore } from "@/store/useIdeStore";
 import { nemoApi } from "@/api/nemo";
 import type { OpenFile } from "@/types/idea";
@@ -18,8 +18,21 @@ export function CodeEditor() {
   const notify = useIdeStore((s) => s.notify);
   const pushTerm = useIdeStore((s) => s.pushTerm);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const preRef = useRef<HTMLPreElement>(null);
 
   const current: OpenFile | undefined = openFiles.find((f) => f.path === activeFile) ?? openFiles[0];
+
+  function syncScroll() {
+    const ta = taRef.current;
+    const pre = preRef.current;
+    if (!ta || !pre) return;
+    pre.scrollTop = ta.scrollTop;
+    pre.scrollLeft = ta.scrollLeft;
+  }
+
+  useEffect(() => {
+    syncScroll();
+  }, [activeFile]);
 
   async function save(f: OpenFile) {
     if (!f.dirty) return;
@@ -85,6 +98,7 @@ export function CodeEditor() {
               {Array.from({ length: countLines(current.content) }, (_, i) => i + 1).join("\n")}
             </div>
             <pre
+              ref={preRef}
               className="code-pre"
               dangerouslySetInnerHTML={{ __html: highlight(current.content, languageOf(current.path)) }}
             />
@@ -96,6 +110,7 @@ export function CodeEditor() {
               autoComplete="off"
               value={current.content}
               onChange={(e) => updateFileContent(current.path, e.target.value)}
+              onScroll={() => syncScroll()}
               onKeyDown={(e) => {
                 if (e.key === "Tab") {
                   e.preventDefault();

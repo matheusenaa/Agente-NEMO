@@ -97,7 +97,7 @@ export function SettingsView() {
           </div>
           <div className="set-row">
             <button className="tool-btn" style={{ color: "var(--danger)", borderColor: "var(--danger)" }} onClick={resetAll}>
-              ResetaR tudo
+              Resetar tudo
             </button>
           </div>
         </div>

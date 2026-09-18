@@ -100,6 +100,7 @@ export interface HistoryItem {
   kind: "chat" | "file" | "task" | "terminal" | "config";
   title: string;
   detail: string;
+  agentId?: string;
 }
 
 export interface LiveStatus {

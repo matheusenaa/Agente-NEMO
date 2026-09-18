@@ -7,13 +7,14 @@ export function NotificationsLayer() {
   const notifications = useIdeStore((s) => s.notifications);
   const dismissNotif = useIdeStore((s) => s.dismissNotif);
   const animations = useIdeStore((s) => s.config.animations);
+  const notifIds = notifications.map((n) => n.id).join("|");
 
   useEffect(() => {
     if (!animations) return;
     const timers = notifications.map((n) => setTimeout(() => dismissNotif(n.id), AUTO_DISMISS_MS));
     return () => timers.forEach(clearTimeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [notifications.length, animations]);
+  }, [notifIds, animations]);
 
   if (notifications.length === 0) return null;
 

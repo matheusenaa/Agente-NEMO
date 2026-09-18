@@ -12,15 +12,17 @@ export function TerminalView() {
   const [pending, setPending] = useState<{ command: string; result: Awaited<ReturnType<typeof nemoApi.runCommand>> } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
-  async function run(force = false) {
-    const command = cmd.trim();
+  async function run(force = false, override?: string) {
+    const command = (override ?? cmd).trim();
     if (!command) return;
-    setCmd("");
+    if (!override) setCmd("");
     setBusy(true);
+    let keepPending = false;
     try {
       const res = await nemoApi.runCommand(command, force);
       if (res.requires_confirm && !force) {
         setPending({ command, result: res });
+        keepPending = true;
         return;
       }
       if (res.ok) {
@@ -37,7 +39,7 @@ export function TerminalView() {
       pushTerm({ tone: "err", text: `Falha ao executar: ${(err as Error).message}` });
     } finally {
       setBusy(false);
-      setPending(null);
+      if (!keepPending) setPending(null);
       requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: "smooth" }));
     }
   }
@@ -64,7 +66,7 @@ export function TerminalView() {
         {pending && (
           <div className="destructive-warn">
             <span>⚠️ {pending.result.reason}</span>
-            <button className="tool-btn" onClick={() => run(true)}>Confirmar execução</button>
+            <button className="tool-btn" onClick={() => run(true, pending.command)}>Confirmar execução</button>
             <button className="tool-btn" onClick={() => setPending(null)}>Cancelar</button>
           </div>
         )}
