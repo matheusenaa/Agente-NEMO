@@ -63,6 +63,7 @@ export function renderMarkdown(text: string): ReactNode {
       items.push(<Fragment key={uid("frag")}>{parseInline(raw)}<br /></Fragment>);
       i += 1;
     }
+    if (i < lines.length && lines[i].trim() === "") i += 1;
     if (listMode === "ul") blocks.push(<ul key={uid("ul")}>{items}</ul>);
     else if (listMode === "ol") blocks.push(<ol key={uid("ol")}>{items}</ol>);
     else if (items.length) blocks.push(<p key={uid("p")}>{items}</p>);
