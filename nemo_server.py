@@ -21,6 +21,13 @@ Uso:
     python nemo_server.py                # development, host 127.0.0.1:8798
     python nemo_server.py --port 8798    # porta customizada
     python nemo_server.py --no-dashboard # nao tenta servir o build do frontend
+    uvicorn nemo_server:app ...          # producao (Render/Railway) — dashboard servido na raiz '/'
+
+Variaveis de ambiente:
+    PORT            → porta do servidor (usado em producao; ex.: Render define PORT)
+    HOST            → host para bind (default 127.0.0.1 em dev)
+    CORS_ORIGINS    → origens permitidas separadas por virgula (extra alem dos locais)
+    OPENROUTER_*    → chave e cabecalhos do OpenRouter (ver .env.example)
 """
 
 from __future__ import annotations
@@ -96,8 +103,8 @@ SQUADS_DIR = ROOT / "squads"
 SKILLS_DIR = ROOT / "skills"
 DASHBOARD_DIST = ROOT / "dashboard" / "dist"
 
-DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 8798
+DEFAULT_HOST = os.getenv("HOST", "127.0.0.1")
+DEFAULT_PORT = int(os.getenv("PORT", "8798"))
 
 # Modelo padrão por categoria de agente (economia consciente por padrão)
 CATEGORY_MODEL_DEFAULT = "deepseek/deepseek-chat"
@@ -380,15 +387,24 @@ def _squads_snapshot() -> Dict[str, Any]:
 
 app = FastAPI(title=f"{PROJECT_NAME} API", version=VERSION)
 
+# CORS — origens locais por padrão + extras via CORS_ORIGINS (produção/antigravity)
+_cors_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://localhost:8798",
+    "http://127.0.0.1:8798",
+]
+_extra_origins = os.getenv("CORS_ORIGINS", "")
+if _extra_origins:
+    for _origin in _extra_origins.split(","):
+        _origin = _origin.strip()
+        if _origin and _origin not in _cors_origins:
+            _cors_origins.append(_origin)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-        "http://localhost:8798",
-        "http://127.0.0.1:8798",
-    ],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -634,6 +650,32 @@ def auth() -> Dict[str, Any]:
     return get_client().check_auth()
 
 
+# ---------------------------------------------------------------------------
+# Dashboard compilado (produção): serve o frontend em '/' caso exista dist.
+# Registro em nível de módulo para funcionar tanto com `python nemo_server.py`
+# quanto com `uvicorn nemo_server:app` (gunicorn/Render/etc).
+# ---------------------------------------------------------------------------
+
+def _mount_dashboard() -> None:
+    if DASHBOARD_DIST.is_dir() and (DASHBOARD_DIST / "index.html").is_file():
+        @app.get("/", include_in_schema=False)
+        def serve_index():
+            return FileResponse(DASHBOARD_DIST / "index.html")
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        def serve_spa(full_path: str):
+            candidate = (DASHBOARD_DIST / full_path).resolve()
+            try:
+                if full_path and candidate.is_file() and str(candidate).startswith(str(DASHBOARD_DIST.resolve())):
+                    return FileResponse(candidate)
+            except Exception:
+                pass
+            return FileResponse(DASHBOARD_DIST / "index.html")
+
+
+_mount_dashboard()
+
+
 if __name__ == "__main__":
     import uvicorn
 
@@ -643,20 +685,9 @@ if __name__ == "__main__":
     parser.add_argument("--no-dashboard", action="store_true", help="não tenta servir o build do frontend")
     args = parser.parse_args()
 
-    if not args.no_dashboard and DASHBOARD_DIST.is_dir() and (DASHBOARD_DIST / "index.html").is_file():
-        @app.get("/")
-        def serve_index():
-            return FileResponse(DASHBOARD_DIST / "index.html")
-
-        @app.get("/{full_path:path}")
-        def serve_spa(full_path: str):
-            candidate = (DASHBOARD_DIST / full_path).resolve()
-            try:
-                if full_path and candidate.is_file() and str(candidate).startswith(str(DASHBOARD_DIST.resolve())):
-                    return FileResponse(candidate)
-            except Exception:
-                pass
-            return FileResponse(DASHBOARD_DIST / "index.html")
+    if args.no_dashboard:
+        app.routes[:] = [r for r in app.routes
+                         if getattr(r, "path", None) not in ("/", "/{full_path:path}")]
 
     print(f"🐟 {PROJECT_NAME} API rodando em http://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")

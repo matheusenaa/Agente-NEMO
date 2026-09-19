@@ -12,6 +12,7 @@ datas = [
     (os.path.join(ROOT, "dashboard", "dist"), "dashboard/dist"),
     (os.path.join(ROOT, "agents"), "agents"),
     (os.path.join(ROOT, "squads"), "squads"),
+    (os.path.join(ROOT, "skills"), "skills"),
     (os.path.join(ROOT, ".env.example"), "."),
     (os.path.join(ROOT, "models_config.py"), "."),
 ]

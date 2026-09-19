@@ -6,6 +6,8 @@ opencode.exe
 dist/
 build/
 NEMO_IDE_Distribuivel.zip
+*.exe
+!_opensquad/**/*.exe
 
 # Python
 __pycache__/

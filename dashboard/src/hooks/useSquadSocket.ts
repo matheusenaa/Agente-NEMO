@@ -7,6 +7,11 @@ const RECONNECT_MAX_MS = 30000;
 const WS_FAIL_THRESHOLD = 3;
 const POLL_INTERVAL_MS = 3000;
 
+// Em produção (backend FastAPI) o snapshot de squads vive em /api/nemo/snapshot.
+// No dev (plugin Vite squadWatcher) ele fica em /api/snapshot. O polling tenta
+// ambos para funcionar nos dois ambientes.
+const SNAPSHOT_URLS = ["/api/nemo/snapshot", "/api/snapshot"];
+
 export function useSquadSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -18,6 +23,7 @@ export function useSquadSocket() {
 
   useEffect(() => {
     let disposed = false;
+    let pollingMode = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let reconnectDelay = RECONNECT_BASE_MS;
     let wsFailCount = 0;
@@ -51,14 +57,28 @@ export function useSquadSocket() {
 
       const poll = async () => {
         if (disposed) return;
-        try {
-          const res = await fetch("/api/snapshot", { cache: "no-store" });
-          if (!res.ok || disposed) return;
-          const msg: WsMessage = await res.json();
-          dispatch(msg);
-          setConnected(true);
-        } catch {
-          // Endpoint not available — will retry on next interval
+        // Tenta as URLs em ordem: produção primeiro (backend), depois dev (plugin Vite).
+        for (const url of SNAPSHOT_URLS) {
+          if (disposed) return;
+          try {
+            const res = await fetch(url, { cache: "no-store" });
+            if (!res.ok) continue;
+            const data = await res.json();
+            if (data && Array.isArray(data.squads)) {
+              const msg: WsMessage = {
+                type: "SNAPSHOT",
+                squads: data.squads,
+                activeStates: data.activeStates && typeof data.activeStates === "object"
+                  ? data.activeStates
+                  : {},
+              };
+              dispatch(msg);
+              setConnected(true);
+              break;
+            }
+          } catch {
+            // tenta a próxima URL no próximo ciclo
+          }
         }
       };
 
@@ -87,7 +107,10 @@ export function useSquadSocket() {
         setConnected(true);
         reconnectDelay = RECONNECT_BASE_MS;
         wsFailCount = 0;
-        stopPolling();
+        if (pollingMode) {
+          pollingMode = false;
+          stopPolling();
+        }
       };
 
       ws.onmessage = (event) => {
@@ -107,7 +130,10 @@ export function useSquadSocket() {
         wsFailCount++;
 
         if (wsFailCount >= WS_FAIL_THRESHOLD) {
+          // Em produção não há WS de squads — desiste do WS e usa polling HTTP.
+          pollingMode = true;
           startPolling();
+          return;
         }
 
         reconnectTimer = setTimeout(() => {
@@ -123,6 +149,9 @@ export function useSquadSocket() {
     }
 
     connect();
+    // Poll imediatamente: em produção não há WS de squads e este primeiro
+    // poll popula o snapshot (OfficeView/sidebar) sem esperar falhas do WS.
+    startPolling();
 
     return () => {
       disposed = true;

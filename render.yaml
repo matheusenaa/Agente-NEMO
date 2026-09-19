@@ -1,0 +1,36 @@
+# Render Blueprint — NEMO IDE (Agentes de IA)
+# Uso: conecte este repositório no Render (Blueprints) ou crie um Web Service
+# apontando para a branch desejada com os campos abaixo.
+#
+# Referência técnica: mesmo padrão do projeto Aniversario_mari (web service
+# Python), adaptado para FastAPI + dashboard compilado (Vite/React).
+
+services:
+  - type: web
+    name: nemo-ide
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: |
+      pip install -r requirements.txt
+      cd dashboard
+      npm install
+      npm run build
+      cd ..
+    startCommand: uvicorn nemo_server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/nemo/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: OPENROUTER_API_KEY
+        sync: false
+        # Preencha no painel do Render: Settings → Environment → Add ->
+        # chave criada em https://openrouter.ai/keys (formato sk-or-v1-...)
+      - key: OPENROUTER_HTTP_REFERER
+        sync: false
+        # Opcional: URL pública do serviço após o primeiro deploy
+      - key: OPENROUTER_APP_TITLE
+        value: NEMO AI Studio
+      - key: CORS_ORIGINS
+        sync: false
+        # Opcional: origens extras separadas por vírgula (ex.: seu domínio custom)

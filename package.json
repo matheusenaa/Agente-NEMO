@@ -2,6 +2,12 @@
   "name": "opensquad-project",
   "version": "1.0.0",
   "private": true,
+  "scripts": {
+    "nemo": "python start_nemo.py",
+    "nemo:check": "python start_nemo.py --check",
+    "nemo:server": "python nemo_server.py",
+    "nemo:dev": "python nemo_server.py --port 8798 & cd dashboard && npm run dev"
+  },
   "dependencies": {
     "playwright": "^1.58.2"
   }

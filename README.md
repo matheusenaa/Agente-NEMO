@@ -14,39 +14,50 @@ Ele orquestra uma equipe especializada de agentes (cada um com personalidade, mo
 
 ```
 NEMO/
-├── nemo_server.py              # Backend FastAPI (porta 8798) — chat, arquivos, terminal, snapshot
+├── nemo_server.py              # Backend FastAPI — chat, arquivos, terminal, snapshot e dashboard
 ├── openrouter_client.py        # Cliente OpenRouter (chat, modelos, fallbacks)
 ├── models_config.py            # Configuração dos modelos com fallbacks
+├── start_nemo.py               # Launcher universal (Windows/Linux/Antigravity) + diagnóstico
 ├── agents/*.agent.md           # Personas completas de cada agente
 ├── requirements.txt
 ├── .env.example
-├── NEMO_IDE.spec               # Build do executável (PyInstaller one-folder)
-├── start_nemo.bat              # Produção 1-clique (backend + dashboard compilado)
-├── start_nemo_dev.bat          # Dev: backend (8798) + Vite HMR (5173)
-├── test_client_unit.py         # Testes unitários do backend
-└── dashboard/                  # Frontend — a IDE NEMO
+├── render.yaml                  # Configuração de deploy (Render)
+├── Procfile                     # Web: uvicorn ... (Render/Railway/etc)
+├── runtime.txt                  # Versão do Python para produção
+├── NEMO_IDE.spec                # Build do executável (PyInstaller one-folder)
+├── NEMO_START.bat               # Launcher 1-clique no Windows
+├── NEMO_DIAGNOSTICO.bat         # Diagnóstico 1-clique no Windows
+├── start_nemo.bat               # Produção 1-clique (backend + dashboard compilado)
+├── start_nemo_dev.bat           # Dev: backend (8798) + Vite HMR (5173)
+├── test_client_unit.py          # Testes unitários do backend
+└── dashboard/                   # Frontend — a IDE NEMO
     ├── index.html
-    ├── vite.config.ts          # alias @ + proxy /api/nemo
+    ├── vite.config.ts           # alias @ + proxy /api/nemo
     └── src/
         ├── main.tsx / App.tsx / AppShell.tsx
-        ├── api/nemo.ts         # Cliente HTTP do backend
-        ├── store/              # useIdeStore (zustand), store do quclube, squads
-        ├── data/               # agentes, temas, status/frases, agentes config
-        ├── hooks/              # useNemoChat, useSquadSocket, useSquads
-        ├── office/             # Cena Phaser do escritório 2D
-        ├── components/ide/     # AppShell, TopBar, AgentSidebar, ChatView,
+        ├── api/nemo.ts          # Cliente HTTP do backend
+        ├── store/               # useIdeStore (zustand), store do quclube, squads
+        ├── data/                # agentes, temas, status/frases, agentes config
+        ├── hooks/               # useNemoChat, useSquadSocket, useSquads
+        ├── office/              # Cena Phaser do escritório 2D
+        ├── components/ide/      # AppShell, TopBar, AgentSidebar, ChatView,
         │                       #   CodeEditor, FileExplorer, TerminalView,
         │                       #   TasksView, HistoryView, SettingsView,
         │                       #   ContextPanel, NotificationsLayer, OfficeView
-        ├── lib/                # renderMarkdown, syntax highlighting, id
-        └── styles/             # globals.css, themes.css, ide.css
+        ├── lib/                 # renderMarkdown, syntax highlighting, id
+        └── styles/              # globals.css, themes.css, ide.css
 ```
 
 ---
 
 ## 🚀 Como rodar
 
-> **Resumo rápido** — Terminal: `python nemo_server.py` • Produção 1-clique: `start_nemo.bat` • Executável: `dist\NEMO_IDE\NEMO_IDE.exe` (na raiz há também o `NEMO_IDE.spec` do build) • Antigravity: `python nemo_server.py --host 0.0.0.0`
+> **Resumo rápido**
+> - Terminal: `python nemo_server.py`
+> - Launcher universal: `python start_nemo.py` (abre o navegador sozinho)
+> - Produção 1-clique Windows: `NEMO_START.bat` ou `start_nemo.bat`
+> - Executável: `dist\NEMO_IDE\NEMO_IDE.exe`
+> - Antigravity/Linux: `python start_nemo.py --host 0.0.0.0`
 
 ### 0. Instalação
 
@@ -67,7 +78,7 @@ Copy-Item .env.example .env
 python nemo_server.py
 ```
 
-O servidor sobe em `http://127.0.0.1:8798` e expõe: `/api/nemo/health`, `/api/nemo/chat`, `/api/nemo/files`, `/api/nemo/file`, `/api/nemo/file/save`, `/api/nemo/terminal`, `/api/nemo/models`, `/api/nemo/snapshot`, `/api/nemo/auth`, `/api/nemo/context`, `/api/nemo/agents`.
+O servidor sobe em `http://127.0.0.1:8798` e expõe: `/api/nemo/health`, `/api/nemo/chat`, `/api/nemo/files`, `/api/nemo/file`, `/api/nemo/file/save`, `/api/nemo/terminal`, `/api/nemo/models`, `/api/nemo/snapshot`, `/api/nemo/auth`, `/api/nemo/context`, `/api/nemo/agents` — e, em produção, também serve o dashboard compilado na raiz `/`.
 
 > **Sem `OPENROUTER_API_KEY`**: o chat responde com um aviso amigável e funcionam todas as telas da IDE (arquivos, terminal, tasks, escritório). **Com chave vencida/inválida (HTTP 401)**: o NEMO explica que precisa de uma chave nova. Com chave válida, conversa de verdade via OpenRouter.
 
@@ -80,30 +91,80 @@ npm.cmd run dev        # http://localhost:5173 (proxy /api/nemo → 8798)
 
 Build de produção: `npm.cmd run build` (gera `dashboard/dist/`, já embutido no executável).
 
-### 3. Produção 1-clique (sempre atualizado)
+### 3. Launcher universal — `python start_nemo.py`
 
-- **`start_nemo.bat`** — sobe o backend com o dashboard compilado e abre o navegador em `http://127.0.0.1:8798/`.
+A forma mais simples de rodar (Windows, Linux ou Antigravity):
+
+```bash
+python start_nemo.py                  # verifica ambiente, inicia e abre o navegador
+python start_nemo.py --host 0.0.0.0   # escuta em todas as interfaces (nuvem/preview)
+python start_nemo.py --port 9000      # porta customizada
+python start_nemo.py --check          # modo diagnóstico (não inicia o servidor)
+python start_nemo.py --no-browser
+```
+
+Também pelo npm (se preferir):
+
+```bash
+npm run nemo         # = python start_nemo.py
+npm run nemo:server  # = python nemo_server.py
+npm run nemo:check   # = diagnóstico
+```
+
+### 4. Produção 1-clique (Windows)
+
+- **`NEMO_START.bat`** — launcher robusto: verifica Python, instala dependências se faltarem, compila o dashboard se necessário, copia `.env.example`→`.env` se não existir, sobe o backend e abre o navegador em `http://127.0.0.1:8798/`.
+- **`start_nemo.bat`** — sobe o backend com o dashboard compilado e abre o navegador.
 - **`start_nemo_dev.bat`** — backend (8798) + Vite dev com HMR (5173).
 
-### 4. Executável standalone (PyInstaller)
+### 5. Executável standalone (PyInstaller)
 
 ```powershell
 dist\NEMO_IDE\NEMO_IDE.exe [--port 8798] [--host 127.0.0.1]
 ```
 
-O build empacota o backend, os `agents/`, `squads/`, `skills/` e o `dashboard/dist/` (native no `NEMO_IDE.spec` — além de `python -m PyInstaller NEMO_IDE.spec --noconfirm`).
+Para reconstruir o executável com o código atual:
 
-### 5. Antigravity (IDE de nuvem)
-
-No terminal do workspace Antigravity (Linux):
-
-```bash
-pip install -r requirements.txt
-cd dashboard && npm install && npm run build && cd ..
-python nemo_server.py --host 0.0.0.0 --port 8798
+```powershell
+cd dashboard; npm.cmd run build; cd ..
+python -m PyInstaller NEMO_IDE.spec --noconfirm
 ```
 
-Depois abra a porta 8798 no painel *Preview/Ports* do Antigravity (o `--host 0.0.0.0` expõe o servidor para preview).
+O build empacota o backend, os `agents/`, `squads/`, `skills/` e o `dashboard/dist/`.
+
+### 6. Diagnóstico do sistema
+
+```powershell
+python start_nemo.py --check      # qualquer sistema
+NEMO_DIAGNOSTICO.bat              # 1-clique no Windows
+```
+
+Mostra: Python, Node, npm, dependências, dashboard, agentes, chave OpenRouter, porta e internet.
+
+---
+
+## 🌐 Deploy (online)
+
+O projeto está preparado para **Render** (e serve para Railway/Railway/Heroku com pequenos ajustes).
+
+Arquivos de deploy:
+- `render.yaml` — Blueprint do serviço (build: `pip install` + `npm install + npm run build`; start: `uvicorn nemo_server:app --host 0.0.0.0 --port $PORT`).
+- `Procfile` — `web: uvicorn nemo_server:app --host 0.0.0.0 --port $PORT`.
+- `runtime.txt` — pin do Python 3.12.10.
+
+### Passos no Render
+
+1. Faça push deste repositório no GitHub (`git push origin main`).
+2. No [Render.com](https://render.com), entre em **Dashboard → New → Blueprint** (usa o `render.yaml` automaticamente) **ou crie um Web Service** apontando para o repositório `Agente-NEMO`.
+3. Campos do Web Service (se não usar Blueprint):
+   - **Build Command**: `pip install -r requirements.txt && cd dashboard && npm install && npm run build && cd ..`
+   - **Start Command**: `uvicorn nemo_server:app --host 0.0.0.0 --port $PORT`
+   - **Health Check Path**: `/api/nemo/health`
+   - **Python Version**: `3.12.10`
+4. Em **Environment**, adicione a variável **`OPENROUTER_API_KEY`** com uma chave válida de https://openrouter.ai/keys (o deploy compila sem ela, mas o chat fica em modo offline).
+5. Aguarde o build e abra a URL `https://nemo-ide.onrender.com/`.
+
+> **Nota**: o backend lê `PORT` automaticamente da plataforma (`os.environ["PORT"]`), serve o dashboard compilado na raiz e o frontend chama a API pelo mesmo domínio (`/api/nemo/...`) — sem configurações extras de CORS em produção.
 
 ---
 
@@ -145,6 +206,14 @@ Cada agente tem **modelo padrão + fallbacks** (ex.: `openai/gpt-4o` → `anthro
 
 ---
 
+## 🗄️ Persistência
+
+- **Interface/estado**: `localStorage` no navegador (chave `nemo-ide`) — temas, tasks, histórico, abas abertas.
+- **Squads**: arquivos `yaml`/`csv` em `squads/` + `state.json` por squad (lido pelo snapshot).
+- **Sem banco externo**: o projeto é intencionalmente self-contained (nenhuma dependência de SQL/NoSQL) — escolha que simplifica deploy e instalação em qualquer máquina.
+
+---
+
 ## 🧪 Testes
 
 ```powershell
@@ -165,3 +234,6 @@ npm.cmd run build    # type-check (tsc -b) + build
 - **Windows PowerShell** exibe UTF-8 como mojibake (`n�o`) no console — as respostas HTTP estão corretas; o problema é só o console.
 - **Python custom fuera do projeto** pode não adicionar o CWD ao `sys.path`; rode os scripts pela raiz do projeto ou insira o caminho manualmente.
 - **Fallback de modelos**: se o modelo padrão falhar (rate limit / indisponível), o backend troca automaticamente para o fallback configurado.
+- **`PORT`/`HOST`**: o servidor respeita as variáveis de ambiente `PORT` e `HOST` (usadas por plataformas de deploy). Local: padrão `127.0.0.1:8798`.
+- **`CORS_ORIGINS`**: origens extras separadas por vírgula (útil com domínio custom — ver `.env.example`).
+- **Segurança**: `.env` (com chave real) **não** é versionado — apenas `.env.example` com placeholder, ver `.gitignore`.
