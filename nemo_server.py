@@ -51,7 +51,28 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # Garante que a raiz do projeto esteja no sys.path independente do ambiente
-ROOT = Path(__file__).resolve().parent
+def _get_project_root() -> Path:
+    """Retorna a raiz do projeto funcionando tanto em dev quanto frozen (PyInstaller).
+
+    Modo frozen (PyInstaller one-folder): os dados do projeto (agents/, squads/,
+    skills/, dashboard/dist, models_config.py, .env.example) são copiados para
+    dentro do diretório _internal/, que é exatamente sys._MEIPASS. Portanto a
+    "raiz do projeto" em frozen é sys._MEIPASS (e NÃO o seu parent, que resolve
+    para um diretório errado).
+    """
+    if getattr(sys, 'frozen', False):
+        base = Path(sys._MEIPASS)
+        # Fallback robusto: se o pacote de dados não estiver em MEIPASS,
+        # procura por agents/ nas proximidades (onedir em outras layouts).
+        if not (base / "agents").is_dir():
+            for cand in (base.parent, base.parent / "_MEIPASS", Path.cwd()):
+                if (cand / "agents").is_dir():
+                    base = cand
+                    break
+        return base
+    return Path(__file__).resolve().parent
+
+ROOT = _get_project_root()
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -92,6 +113,7 @@ CATEGORY_MODEL_MAP: Dict[str, str] = {
     "publishing": "openai/gpt-4o-mini",
     "social": "openai/gpt-4o-mini",
     "strategy": "openai/gpt-4o-mini",
+    "technology": "openai/gpt-4o",
 }
 
 ICON_BY_CATEGORY: Dict[str, str] = {
@@ -106,6 +128,7 @@ ICON_BY_CATEGORY: Dict[str, str] = {
     "publishing": "📤",
     "social": "📱",
     "strategy": "🎯",
+    "technology": "🛠️",
 }
 
 # Comandos proibidos / destrutivos — exigem confirmacao explicita (force=true)
@@ -492,6 +515,26 @@ def chat(req: ChatRequest) -> Dict[str, Any]:
             "completion_tokens": result.completion_tokens,
             "total_tokens": result.total_tokens,
         }
+    if _is_auth_error(result.error_message or ""):
+        # Chave presente mas inválida/expirada → resposta graciosa em PT-BR
+        # (o frontend exibe como mensagem normal, marcada como fallback offline).
+        return {
+            "ok": True,
+            "agent": req.agent,
+            "content": (
+                "⚠️ Minha chave de acesso ao OpenRouter está **invalida ou expirada** "
+                "(HTTP 401), então não consigo chamar modelos de IA no momento. 🐟\n\n"
+                "Para voltar a responder de verdade:\n"
+                "1. Abra o arquivo `.env` do projeto e troque `OPENROUTER_API_KEY` por uma chave nova "
+                "(crie em https://openrouter.ai/keys).\n"
+                "2. Reinicie o servidor (`python nemo_server.py`).\n\n"
+                "Enquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro. "
+                "💙 você me deu o diagnóstico?"),
+            "model_used": result.model_used or model,
+            "is_fallback": True,
+            "offline": True,
+            "latency_ms": latency_ms,
+        }
     return {
         "ok": False,
         "agent": req.agent,
@@ -499,6 +542,16 @@ def chat(req: ChatRequest) -> Dict[str, Any]:
         "model_used": result.model_used,
         "latency_ms": latency_ms,
     }
+
+
+def _is_auth_error(message: str) -> bool:
+    """Detecta erros de autenticação/credencial do OpenRouter na mensagem de erro."""
+    lowered = (message or "").lower()
+    markers = [
+        "401", "unauthorized", "authentication", "auth", "api key",
+        "invalid", "expirad", "expired", "invalid_api_key", "insufficient",
+    ]
+    return any(m in lowered for m in markers)
 
 
 @app.get("/api/nemo/files")
@@ -573,6 +626,12 @@ def models():
 @app.get("/api/nemo/snapshot")
 def snapshot() -> Dict[str, Any]:
     return _squads_snapshot()
+
+
+@app.get("/api/nemo/auth")
+def auth() -> Dict[str, Any]:
+    """Valida a chave OpenRouter junto ao endpoint oficial /auth/key."""
+    return get_client().check_auth()
 
 
 if __name__ == "__main__":

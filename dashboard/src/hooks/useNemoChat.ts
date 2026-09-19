@@ -43,17 +43,19 @@ export function useNemoChat() {
 
       const msgId = insertAgentMessage({ role: "agent", agentId, content: "" });
       let ok = false;
+      let offline = false;
       try {
         const res = await nemoApi.chat(agentId, content, [], agent.defaultModel);
         if (res.ok) {
           ok = true;
+          offline = !!res.offline;
           patchMessage(msgId, {
             content: res.content,
             status: "done",
             meta: { model: res.model_used, latencyMs: res.latency_ms, isFallback: res.is_fallback, promptTokens: res.prompt_tokens, completionTokens: res.completion_tokens },
           });
-          addLog({ tone: "ok", agentId, text: `${agent.name}: respondido (${res.model_used}, ${res.latency_ms ?? 0}ms)` });
-          notify({ icon: agent.icon, text: `${agent.name} respondeu`, tone: "ok" });
+          addLog({ tone: "warn", agentId, text: res.offline ? `Chave OpenRouter inválida/expirada — resposta offline gerada` : `${agent.name}: respondido (${res.model_used}, ${res.latency_ms ?? 0}ms)` });
+          notify({ icon: agent.icon, text: `${agent.name} respondeu`, tone: res.offline ? "warn" : "ok" });
         } else {
           patchMessage(msgId, { content: res.error ?? "Erro desconhecido.", status: "error" });
           addLog({ tone: "error", agentId, text: `${agent.name}: ${(res.error ?? "").slice(0, 140)}` });
@@ -64,7 +66,7 @@ export function useNemoChat() {
       }
 
       window.clearInterval(im);
-      setLiveStatus({ busy: false, label: ok ? "🎯 Resolvido" : "😎 Tudo sob controle", phrase: "" });
+      setLiveStatus({ busy: false, label: ok && !offline ? "🎯 Resolvido" : "😎 Tudo sob controle", phrase: "" });
 
       if (content.trim().length > 10) {
         const t = addTask({ title: content.trim().slice(0, 60), priority: "normal", agentId });

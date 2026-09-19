@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { COLORS, TILE, MARGIN, WALL_H } from './palette';
+import { COLORS, TILE, MARGIN, WALL_H, VASCO } from './palette';
 import { FURNITURE_KEYS } from './assetKeys';
 
 export class RoomBuilder {
@@ -14,6 +14,55 @@ export class RoomBuilder {
     this.drawWalls(roomW);
     this.drawRoomBorder(roomW, roomH);
     this.placeFurniture(roomW, roomH);
+  }
+
+  /**
+   * Faixa de identidade da sala — "NEMO AI STUDIO" com cores do Vasco da Gama.
+   * Fica no centro da parede principal (faixa vertical superior).
+   */
+  buildBranding(roomW: number): void {
+    const s = this.scene;
+    const centerX = roomW / 2;
+    const bannerW = Math.min(380, roomW - MARGIN);
+    const bannerX = centerX;
+    const bannerY = WALL_H / 2 + 6;
+
+    const g = s.add.graphics();
+    // Bandeira/fundo vermelha com borda
+    g.fillStyle(VASCO.red, 1);
+    g.fillRoundedRect(bannerX - bannerW / 2, bannerY - 22, bannerW, 52, 8);
+    // Listra diagonal preta (identidade Vasco)
+    g.fillStyle(VASCO.black, 0.9);
+    for (let sx = -bannerW / 2; sx < bannerW / 2; sx += 62) {
+      g.save();
+      g.translateCanvas(bannerX + sx, bannerY);
+      g.rotateCanvas(0.5);
+      g.fillRect(-18, -60, 36, 120);
+      g.restore();
+    }
+    // Moldura
+    g.lineStyle(3, VASCO.white, 1);
+    g.strokeRoundedRect(bannerX - bannerW / 2, bannerY - 22, bannerW, 52, 8);
+    g.setDepth(1);
+
+    // Cruz de Malta simplificada (detalhe branco) à esquerda
+    const crossX = bannerX - bannerW / 2 + 30;
+    g.fillStyle(VASCO.white, 1);
+    g.fillRect(crossX - 9, bannerY - 11, 18, 46);
+    g.fillRect(crossX - 9, bannerY + 4, 18, 46);
+    g.fillRect(crossX - 20, bannerY + 9, 18, 46);
+    g.fillRect(crossX + 2, bannerY + 9, 18, 46);
+
+    // Texto principal
+    s.add.text(bannerX + 12, bannerY, '⚓ NEMO AI STUDIO', {
+      fontFamily: '"Segoe UI", "Helvetica Neue", Arial, sans-serif',
+      fontSize: '26px',
+      fontStyle: 'bold',
+      color: '#ffffff',
+      align: 'center',
+      stroke: VASCO.black.toString(16).padStart(6, '0'),
+      strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(2);
   }
 
   private drawFloor(roomW: number, roomH: number): void {

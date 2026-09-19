@@ -2,10 +2,17 @@ import { useEffect, useRef } from 'react';
 import Phaser from 'phaser';
 import { OfficeScene } from './OfficeScene';
 import { useSquadStore } from '@/store/useSquadStore';
+import { useIdeStore } from '@/store/useIdeStore';
 
-export function PhaserGame() {
+interface PhaserGameProps {
+  onAgentClick?: (agentId: string) => void;
+}
+
+export function PhaserGame({ onAgentClick }: PhaserGameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
+  const clickRef = useRef(onAgentClick);
+  clickRef.current = onAgentClick;
 
   // Create Phaser game on mount
   useEffect(() => {
@@ -52,40 +59,66 @@ export function PhaserGame() {
 
   // Bridge React state → Phaser scene (emite estado inicial + mudanças)
   useEffect(() => {
-    const emit = (state: ReturnType<typeof useSquadStore.getState>) => {
+    const getScene = (): OfficeScene | null => {
       const game = gameRef.current;
-      if (!game) return;
+      if (!game) return null;
       const scene = game.scene.getScene("OfficeScene") as OfficeScene | null;
-      if (!scene || !scene.scene.isActive()) return;
+      if (!scene || !scene.scene.isActive()) return null;
+      return scene;
+    };
 
+    const emitSquad = () => {
+      const scene = getScene();
+      if (!scene) return;
+      const state = useSquadStore.getState();
       const selectedSquad = state.selectedSquad;
       const squadState = selectedSquad
         ? state.activeStates.get(selectedSquad) ?? null
         : null;
-
       scene.events.emit("stateUpdate", squadState);
     };
 
-    // Estado inicial (ex.: squad já ativo ao montar a cena)
-    emit(useSquadStore.getState());
+    const emitActivity = () => {
+      const scene = getScene();
+      if (!scene) return;
+      const live = useIdeStore.getState().liveStatus;
+      scene.events.emit("activity", {
+        agentId: live.agentId,
+        busy: live.busy,
+        label: live.label,
+      });
+    };
 
-    const unsubscribeEffect = useSquadStore.subscribe((state) => {
-      emit(state);
+    const onAgentClick = (id: string) => clickRef.current?.(id);
+
+    // Estado inicial (ex.: squad já ativo ao montar a cena)
+    emitSquad();
+
+    const unsubSquad = useSquadStore.subscribe(emitSquad);
+    const unsubIde = useIdeStore.subscribe((state, prev) => {
+      if (state.liveStatus !== prev.liveStatus) emitActivity();
+      // cliques vêm da cena através do handler registrado abaixo
     });
 
     // Re-emite após a cena Phaser terminar de criar (estado inicial não chega antes)
     const reShot = setInterval(() => {
-      const game = gameRef.current;
-      const scene = game?.scene.getScene("OfficeScene") as OfficeScene | null;
-      if (scene?.scene.isActive()) {
-        emit(useSquadStore.getState());
+      const scene = getScene();
+      if (scene) {
+        scene.setAgentClickHandler(onAgentClick);
+        scene.events.off('agentClick');
+        scene.events.on('agentClick', onAgentClick);
+        emitSquad();
+        emitActivity();
         clearInterval(reShot);
       }
     }, 300);
 
     return () => {
       clearInterval(reShot);
-      unsubscribeEffect();
+      unsubSquad();
+      unsubIde();
+      const scene = getScene();
+      if (scene) scene.events.off('agentClick');
     };
   }, []);
 
@@ -96,6 +129,7 @@ export function PhaserGame() {
         flex: 1,
         overflow: 'hidden',
         imageRendering: 'auto',
+        cursor: 'default',
       }}
     />
   );

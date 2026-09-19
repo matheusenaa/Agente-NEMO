@@ -31,9 +31,11 @@ export type ChatResponse =
       content: string;
       model_used: string;
       is_fallback?: boolean;
+      offline?: boolean;
       latency_ms?: number;
       prompt_tokens?: number;
       completion_tokens?: number;
+      total_tokens?: number;
     }
   | { ok: false; agent: string; error: string; latency_ms?: number };
 

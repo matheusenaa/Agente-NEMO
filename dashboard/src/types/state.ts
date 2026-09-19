@@ -18,6 +18,10 @@ export interface Agent {
   status: AgentStatus;
   gender?: "male" | "female";
   desk: AgentDesk;
+  // Campos visuais opcionais (Elenco real da sala de reunião)
+  title?: string;
+  categoryIcon?: string;
+  colorHex?: string;
 }
 
 export interface Handoff {

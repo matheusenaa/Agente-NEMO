@@ -43,7 +43,8 @@ class OpenRouterClient:
         app_title: Optional[str] = None,
         base_url: str = OPENROUTER_BASE_URL,
     ):
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY", "").strip()
+        # Chave explícita vazia ("") significa SEM chave; só usa o .env quando NADA é passado.
+        self.api_key = os.getenv("OPENROUTER_API_KEY", "").strip() if api_key is None else api_key.strip()
         self.referer = referer or os.getenv("OPENROUTER_HTTP_REFERER", "http://localhost:3000")
         self.app_title = app_title or os.getenv("OPENROUTER_APP_TITLE", "NEMO AI Studio")
         self.base_url = base_url

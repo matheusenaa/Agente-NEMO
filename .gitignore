@@ -3,6 +3,9 @@
 
 # Sensitive / heavy binaries
 opencode.exe
+dist/
+build/
+NEMO_IDE_Distribuivel.zip
 
 # Python
 __pycache__/
@@ -34,6 +37,7 @@ Desktop.ini
 squads/**/output/**/*.pdf
 squads/**/output/**/*.xlsx
 squads/**/output/**/*.pbit
+squads/**/state.json
 # Build artifacts
 dashboard/dist/
 *.tsbuildinfo

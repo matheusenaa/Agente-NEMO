@@ -2,7 +2,7 @@
 
 **NEMO** é o seu **coordenador pessoal de agentes de IA** com identidade visual de **Vasco da Gama** 🔵⚪ (o time adversário não aparece 👀).
 
-Ele orquestra uma equipe especializada de agentes (cada um com personalidade, modelo padrão no OpenRouter e fallbacks automáticos) construída **por você, para o seu trabalho real**: finanças, dados, pesquisa, redação, revisão, design, vídeo, redes sociais, SEO e publicação.
+Ele orquestra uma equipe especializada de agentes (cada um com personalidade, modelo padrão no OpenRouter e fallbacks automáticos) construída **por você, para o seu trabalho real**: finanças, dados, pesquisa, redação, revisão, design, vídeo, redes sociais, SEO, publicação e TI (o JARVIS, engenheiro de software sênior).
 
 > ✌️ Duas formas de uso (ambas funcionam juntas):
 > - **Chat + Escritório 2D** no dashboard React (Phaser)
@@ -17,10 +17,12 @@ NEMO/
 ├── nemo_server.py              # Backend FastAPI (porta 8798) — chat, arquivos, terminal, snapshot
 ├── openrouter_client.py        # Cliente OpenRouter (chat, modelos, fallbacks)
 ├── models_config.py            # Configuração dos modelos com fallbacks
-├── agents_config.py            # Configuração dos agentes (roster)
 ├── agents/*.agent.md           # Personas completas de cada agente
 ├── requirements.txt
 ├── .env.example
+├── NEMO_IDE.spec               # Build do executável (PyInstaller one-folder)
+├── start_nemo.bat              # Produção 1-clique (backend + dashboard compilado)
+├── start_nemo_dev.bat          # Dev: backend (8798) + Vite HMR (5173)
 ├── test_client_unit.py         # Testes unitários do backend
 └── dashboard/                  # Frontend — a IDE NEMO
     ├── index.html
@@ -44,13 +46,20 @@ NEMO/
 
 ## 🚀 Como rodar
 
+> **Resumo rápido** — Terminal: `python nemo_server.py` • Produção 1-clique: `start_nemo.bat` • Executável: `dist\NEMO_IDE\NEMO_IDE.exe` (na raiz há também o `NEMO_IDE.spec` do build) • Antigravity: `python nemo_server.py --host 0.0.0.0`
+
+### 0. Instalação
+
+```powershell
+pip install -r requirements.txt
+cd dashboard; npm install; cd ..
+```
+
+> **Atenção (PowerShell)**: se o comando `npm` for bloqueado pela *Execution Policy* (erro de `npm.ps1`), use **`npm.cmd`** (ex.: `npm.cmd run build`, `npm.cmd run dev`).
+
 ### 1. Backend (Python)
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-
 # chave da API (opcional — sem ela, respostas ficam em modo offline)
 Copy-Item .env.example .env
 # edite o .env com sua OPENROUTER_API_KEY
@@ -58,19 +67,43 @@ Copy-Item .env.example .env
 python nemo_server.py
 ```
 
-O servidor sobe em `http://127.0.0.1:8798` e expõe: `/api/nemo/health`, `/api/nemo/chat`, `/api/nemo/files`, `/api/nemo/file`, `/api/nemo/file/save`, `/api/nemo/terminal`, `/api/nemo/models`, `/api/nemo/snapshot`.
+O servidor sobe em `http://127.0.0.1:8798` e expõe: `/api/nemo/health`, `/api/nemo/chat`, `/api/nemo/files`, `/api/nemo/file`, `/api/nemo/file/save`, `/api/nemo/terminal`, `/api/nemo/models`, `/api/nemo/snapshot`, `/api/nemo/auth`, `/api/nemo/context`, `/api/nemo/agents`.
 
-> **Sem `OPENROUTER_API_KEY`**: o chat responde com um aviso amigável e funcionam todas as telas da IDE (arquivos, terminal, tasks, escritório). Com a chave, o NEMO conversa de verdade via OpenRouter.
+> **Sem `OPENROUTER_API_KEY`**: o chat responde com um aviso amigável e funcionam todas as telas da IDE (arquivos, terminal, tasks, escritório). **Com chave vencida/inválida (HTTP 401)**: o NEMO explica que precisa de uma chave nova. Com chave válida, conversa de verdade via OpenRouter.
 
 ### 2. Dashboard (IDE)
 
 ```powershell
 cd dashboard
-npm install
-npm run dev        # http://localhost:5173 (proxy /api/nemo → 8798)
+npm.cmd run dev        # http://localhost:5173 (proxy /api/nemo → 8798)
 ```
 
-Build de produção: `npm run build` (gera `dashboard/dist/`).
+Build de produção: `npm.cmd run build` (gera `dashboard/dist/`, já embutido no executável).
+
+### 3. Produção 1-clique (sempre atualizado)
+
+- **`start_nemo.bat`** — sobe o backend com o dashboard compilado e abre o navegador em `http://127.0.0.1:8798/`.
+- **`start_nemo_dev.bat`** — backend (8798) + Vite dev com HMR (5173).
+
+### 4. Executável standalone (PyInstaller)
+
+```powershell
+dist\NEMO_IDE\NEMO_IDE.exe [--port 8798] [--host 127.0.0.1]
+```
+
+O build empacota o backend, os `agents/`, `squads/`, `skills/` e o `dashboard/dist/` (native no `NEMO_IDE.spec` — além de `python -m PyInstaller NEMO_IDE.spec --noconfirm`).
+
+### 5. Antigravity (IDE de nuvem)
+
+No terminal do workspace Antigravity (Linux):
+
+```bash
+pip install -r requirements.txt
+cd dashboard && npm install && npm run build && cd ..
+python nemo_server.py --host 0.0.0.0 --port 8798
+```
+
+Depois abra a porta 8798 no painel *Preview/Ports* do Antigravity (o `--host 0.0.0.0` expõe o servidor para preview).
 
 ---
 
@@ -79,7 +112,7 @@ Build de produção: `npm run build` (gera `dashboard/dist/`).
 - **TopBar** — abas de view (Chat, Workspace, Escritório, Terminal, Tasks, Histórico, Config), botões de painéis (esquerda/direita/inferior), sino de notificações, badge de tasks e perfil.
 - **AgentSidebar** (esquerda, colapsável) — rosters dos agentes com ícone, nome, cargo e **status ao vivo** + **squads ativos**.
 - **ChatView** — mensagens em bubbles com ícone do agente, timestamps, **estado "typing" com status rotativos** e frases engraçadas, editor de mensagem com sugestões.
-- **OfficeView** (Escritório) — cena Phaser 2D com a equipe em mesas, estados visuais (idle/pensando/trabalhando/entregando) e seletor de squads.
+- **OfficeView** (Escritório) — **sala de reunião 2D** (Phaser) com a equipe NEMO completa: personagens por função, faixa "NEMO AI STUDIO" nas cores do Vasco, balões de fala com frases divertidas, animações por status (pensando/digitando/comemorando), **clique no agente → perfil → conversar** e seletor de squads.
 - **WorkspaceView** — explorador de arquivos (navegação por breadcrumbs) + editor com abas, highlight de sintaxe (Python, TS/JS, JSON, YAML, CSS, HTML, shell, markdown), line numbers, sujar/salvar.
 - **TerminalView** — painel inferior com abas ⌨️ Terminal / 🪵 Logs / ▶ Exec; execução segura com confirmação para comandos destrutivos.
 - **TasksView** — tarefas com prioridades, adição rápida e progresso.
@@ -96,6 +129,7 @@ Build de produção: `npm run build` (gera `dashboard/dist/`).
 | Agente | Nome | Papel |
 |--------|------|-------|
 | 🐟 **NEMO** | Nemo | Assistente & Coordenador da equipe |
+| 🛠️ JARVIS | Jarvis | Engenharia de software & TI (todas as linguagens, infra, jogos, segurança, redes) |
 | 📊 Análisys | Ana | Analista de dados |
 | 🔍 Rebeca | — | Pesquisadora |
 | ✍️ Clara | — | Redatora |
@@ -121,7 +155,7 @@ python test_client_unit.py
 
 # Frontend
 cd dashboard
-npm run build    # type-check (tsc -b) + build
+npm.cmd run build    # type-check (tsc -b) + build
 ```
 
 ---

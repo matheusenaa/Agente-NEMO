@@ -1,7 +1,11 @@
 import { useIdeStore } from "@/store/useIdeStore";
 import { getAgent } from "@/data/agents";
 
-export function AgentProfileModal() {
+interface AgentProfileModalProps {
+  onClose?: () => void;
+}
+
+export function AgentProfileModal({ onClose }: AgentProfileModalProps = {}) {
   const activeAgentId = useIdeStore((s) => s.activeAgentId);
   const liveStatus = useIdeStore((s) => s.liveStatus);
   const toggleRight = useIdeStore((s) => s.toggleRight);
@@ -11,8 +15,10 @@ export function AgentProfileModal() {
   const agent = getAgent(activeAgentId);
   const isLive = liveStatus.agentId === activeAgentId && liveStatus.busy;
 
+  const close = () => (onClose ? onClose() : useIdeStore.getState().setView("chat"));
+
   return (
-    <div className="modal-mask" onClick={() => useIdeStore.getState().setView("chat")}>
+    <div className="modal-mask" onClick={close}>
       <div className="modal-card" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <div className="agent-ava" style={{ background: agent.color, width: 42, height: 42, fontSize: 22 }} dangerouslySetInnerHTML={{ __html: agent.icon }} />
@@ -20,7 +26,7 @@ export function AgentProfileModal() {
             <div style={{ fontWeight: 700, fontSize: 16 }}>{agent.name}</div>
             <div style={{ color: "var(--text2)", fontSize: 13 }}>{agent.role}</div>
           </div>
-          <button className="icon-btn" onClick={() => useIdeStore.getState().setView("chat")} style={{ fontSize: 16 }}>
+          <button className="icon-btn" onClick={close} style={{ fontSize: 16 }}>
             ✕
           </button>
         </div>

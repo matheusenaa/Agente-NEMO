@@ -24,6 +24,22 @@ export const COLORS = {
   wallTrim: 0xa89888,
 } as const;
 
+// Identidade Vasco da Gama — usada na sala de reunião do NEMO
+export const VASCO = {
+  red: 0xc8102e,
+  redDark: 0x9d0c22,
+  black: 0x0e0e14,
+  white: 0xf5f5f5,
+  gold: 0xffcc33,
+} as const;
+
+// Speech-bubble colors
+export const BUBBLE = {
+  bg: 0xffffff,
+  text: 0x1a1225,
+  border: 0xc8102e,
+} as const;
+
 // Layout constants
 export const TILE = 32;           // Base tile size in pixels
 export const CELL_W = 3 * TILE;   // 96px — desk cell width (tighter grid)
