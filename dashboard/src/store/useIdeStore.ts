@@ -259,6 +259,8 @@ export const useIdeStore = create<IdeStore>()(
         activeAgentId: s.activeAgentId,
         threads: s.threads,
         events: s.events,
+        tasks: s.tasks,
+        notifications: s.notifications,
       }),
     },
   ),

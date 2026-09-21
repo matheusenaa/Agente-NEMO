@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useIdeStore } from "@/store/useIdeStore";
 import { useSquadSocket } from "@/hooks/useSquadSocket";
+import { useEventReminders } from "@/hooks/useEventReminders";
 import { getTheme } from "@/data/themes";
 import { TopBar } from "./TopBar";
 import { AgentSidebar } from "./AgentSidebar";
@@ -49,6 +50,7 @@ function bottomClear() {
 
 export function AppShell() {
   useSquadSocket();
+  useEventReminders();
   const activeView = useIdeStore((s) => s.activeView);
   const bottomOpen = useIdeStore((s) => s.bottomOpen);
   const config = useIdeStore((s) => s.config);
