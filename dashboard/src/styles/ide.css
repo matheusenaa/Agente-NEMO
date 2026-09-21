@@ -369,3 +369,20 @@ textarea.ev-in{resize:vertical;min-height:46px}
   .cal-wrap{padding:12px}
   .cal-nav{width:100%;justify-content:space-between}
 }
+/* ============ CHAT: SEPARADORES DE DIA ============ */
+.day-group{display:flex;flex-direction:column;gap:8px}
+.day-chip{align-self:center;font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:capitalize;color:var(--text2);background:var(--bg3);border:1px solid var(--border);border-radius:999px;padding:3px 12px;margin:6px 0 2px}
+
+/* ============ MICROINTERACOES (HOVER / FEEDBACK) ============ */
+.tool-btn,.dash-row,.dash-agent,.stat-card,.suggest-btn,.hist-row,.dock-c,.cal-cell,.cal-list-item,.nav-btn-l,.seg-btn,.agent-chip,.ev-cat,.task-chip,.squad-card{transition:transform .12s ease,box-shadow .12s ease,filter .12s ease,border-color .12s ease}
+.stat-card:hover,.dash-row:hover,.dash-agent:hover{transform:translateY(-1px);border-color:color-mix(in srgb,var(--accent) 40%,var(--border))}
+.stat-card{cursor:pointer;box-shadow:0 1px 0 rgba(255,255,255,.03)}
+.stat-card:hover{box-shadow:0 6px 18px -8px rgba(0,0,0,.6)}
+.tool-btn:active,.suggest-btn:active,.send-now:active{transform:scale(.97)}
+.dash-agent:active{transform:scale(.95)}
+.dash-live{color:var(--warn);font-weight:600}
+
+/* Acessibilidade: respeitar preferencia por movimento reduzido */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important;scroll-behavior:auto !important}
+}

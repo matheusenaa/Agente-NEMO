@@ -16,6 +16,7 @@ export function DashboardView() {
   const threads = useIdeStore((s) => s.threads);
   const logs = useIdeStore((s) => s.logs);
   const notifications = useIdeStore((s) => s.notifications);
+  const history = useIdeStore((s) => s.history);
   const squads = useSquadStore((s) => s.squads);
 
   const openTasks = tasks.filter((t) => t.status === "pending").length;
@@ -40,6 +41,14 @@ export function DashboardView() {
     .slice(0, 5);
 
   const recentLogs = [...logs].reverse().slice(0, 6);
+
+  const recentMissions = history
+    .filter((h) => h.kind === "task")
+    .map((h) => {
+      const t = tasks.find((x) => x.title === h.title);
+      return { ...h, agentId: t?.agentId ?? h.agentId ?? "nemo" };
+    })
+    .slice(0, 5);
 
   const go = (view: ViewId) => setView(view);
   const chatWith = (id: string) => {
@@ -159,6 +168,24 @@ export function DashboardView() {
                   </span>
                   <span className="dash-agent-n">{a.name}</span>
                   <span className="dash-agent-s">{isBusy ? "ocupado" : "online"}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="card-tt">🎯 Missões recentes</div>
+          <div className="dash-list">
+            {recentMissions.length === 0 && <div className="dash-empty">Nenhuma missão delegada ainda. Peça uma tarefa em 📝 Tarefas.</div>}
+            {recentMissions.map((m) => {
+              const agent = getAgent(m.agentId);
+              return (
+                <button key={m.id} className="dash-row clickable" onClick={() => go("tasks")}>
+                  <AgentAvatar id={m.agentId} accent={agent.color} size={26} badge={agent.icon} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="dash-row-title">{m.title}</div>
+                    <div className="dash-row-sub">{agent.name} · {new Date(m.time).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</div>
+                  </div>
+                  <span style={{ color: "var(--text3)", fontSize: 11 }}>{m.detail}</span>
                 </button>
               );
             })}

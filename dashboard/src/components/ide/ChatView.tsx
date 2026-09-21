@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useIdeStore } from "@/store/useIdeStore";
 import { useNemoChat } from "@/hooks/useNemoChat";
 import { getAgent } from "@/data/agents";
 import { MessageBubble } from "./MessageBubble";
 import { AgentAvatar } from "@/components/AgentAvatar";
+import type { ChatMessage } from "@/types/idea";
 
 const SUGGESTIONS = [
   "Analise meus gastos e encontre duplicados",
@@ -26,6 +27,18 @@ export function ChatView() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const agent = getAgent(activeAgentId);
+
+  const groups = useMemo(() => {
+    const out: { dayKey: string; msgs: ChatMessage[] }[] = [];
+    for (const m of messages) {
+      const d = new Date(m.time);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const last = out[out.length - 1];
+      if (last && last.dayKey === key) last.msgs.push(m);
+      else out.push({ dayKey: key, msgs: [m] });
+    }
+    return out;
+  }, [messages]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -73,8 +86,13 @@ export function ChatView() {
       </div>
 
       <div className="msgs">
-        {messages.map((m) => (
-          <MessageBubble key={m.id} message={m} showTimestamps={showTimestamps} />
+        {groups.map((g) => (
+          <div key={g.dayKey} className="day-group">
+            <div className="day-chip">{dayLabel(g.dayKey)}</div>
+            {g.msgs.map((m) => (
+              <MessageBubble key={m.id} message={m} showTimestamps={showTimestamps} />
+            ))}
+          </div>
         ))}
         <div ref={endRef} />
       </div>
@@ -108,4 +126,14 @@ export function ChatView() {
       </div>
     </section>
   );
+}
+
+function dayLabel(dayKey: string): string {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const d = new Date(dayKey + "T00:00");
+  const diffDays = Math.round((start.getTime() - d.getTime()) / 86400000);
+  if (diffDays === 0) return "Hoje";
+  if (diffDays === 1) return "Ontem";
+  return d.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
 }
