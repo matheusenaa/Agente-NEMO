@@ -60,7 +60,7 @@ export function TasksView() {
           </div>
         )}
 
-        {tasks.map((t) => {
+        {tasks.map((t: TaskItem) => {
           const agent = t.agentId ? getAgent(t.agentId) : undefined;
           return (
             <div key={t.id} className={`taskline ${t.status === "done" ? "done" : ""}`}>
@@ -77,9 +77,10 @@ export function TasksView() {
               {agent && <AgentAvatar id={agent.id} accent={agent.color} size={22} badge={agent.icon} />}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600, wordBreak: "break-word" }}>{t.title}</div>
-                <div style={{ display: "flex", gap: 10, fontSize: 11, color: "var(--text3)", marginTop: 2 }}>
+<div style={{ display: "flex", gap: 10, fontSize: 11, color: "var(--text3)", marginTop: 2 }}>
                   <span>{agent?.name ?? "nemo"}</span>
                   <span>{PRIORITY_ICON[t.priority].icon} {PRIORITY_ICON[t.priority].label}</span>
+                  {t.dueDate && <span>📅 {new Date(t.dueDate).toLocaleDateString("pt-BR", { month: "2-digit", day: "2-digit" })}</span>}
                   <span>🕐 {new Date(t.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>
                 </div>
               </div>

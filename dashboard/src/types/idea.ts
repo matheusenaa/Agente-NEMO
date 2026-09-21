@@ -52,6 +52,7 @@ export interface TaskItem {
   agentId: string;
   status: TaskStatus;
   createdAt: number;
+  dueDate?: number;
   doneAt?: number;
 }
 

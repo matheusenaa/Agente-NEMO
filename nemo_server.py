@@ -537,9 +537,14 @@ def chat(req: ChatRequest) -> Dict[str, Any]:
     started = time.perf_counter()
     if not c.has_valid_key_format():
         return {
-            "ok": False,
+            "ok": True,
             "agent": req.agent,
-            "error": "OPENROUTER_API_KEY não configurada. Crie um arquivo .env a partir de .env.example com sua chave do OpenRouter.",
+            "content": "⚠️ Minha chave de acesso ao OpenRouter não está configurada. "
+                       "Crie um arquivo `.env` a partir de `.env.example` com sua chave do OpenRouter para eu responder de verdade.\n\n"
+                       "Enquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro. 🐟",
+            "model_used": model,
+            "is_fallback": True,
+            "offline": True,
             "latency_ms": 0,
         }
     result: CompletionResult = c.chat_completion(
