@@ -2,7 +2,7 @@
 
 export type ThemeId = "ocean" | "vasco" | "cyber" | "midnight" | "graphite";
 export type LayoutId = "ide" | "chat" | "command" | "minimal";
-export type ViewId = "chat" | "workspace" | "office" | "terminal" | "tasks" | "history" | "settings";
+export type ViewId = "dashboard" | "chat" | "office" | "calendar" | "workspace" | "terminal" | "tasks" | "history" | "settings";
 export type Density = "compact" | "comfortable" | "spacious";
 
 export interface AgentCard {
@@ -108,6 +108,21 @@ export interface LiveStatus {
   label: string;
   phrase: string;
   busy: boolean;
+}
+
+export type EventCategory = "trabalho" | "pessoal" | "estudos" | "reuniao" | "lembrete" | "outro";
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  description: string;
+  date: string; // YYYY-MM-DD
+  time: string; // HH:MM (24h)
+  durationMin: number;
+  category: EventCategory;
+  agentId: string;
+  remind: number; // minutos antes
+  createdAt: number;
 }
 
 export interface IdeConfig {

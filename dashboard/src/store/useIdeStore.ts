@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type {
-  ChatMessage, FileNode, HistoryItem, IdeConfig, LiveStatus, LogEntry,
+  CalendarEvent, ChatMessage, FileNode, HistoryItem, IdeConfig, LiveStatus, LogEntry,
   NotifItem, OpenFile, TaskItem, TermLine, ViewId,
 } from "@/types/idea";
 import { getAgent } from "@/data/agents";
@@ -20,6 +20,30 @@ export const DEFAULT_CONFIG: IdeConfig = {
   favAgents: ["nemo"],
   language: "pt-BR",
 };
+
+const NEMO_GREETING: ChatMessage = {
+  id: uid("msg"),
+  role: "agent",
+  agentId: "nemo",
+  content:
+    "Bom dia! 👋 Sou o **NEMO**, coordenador da sua equipe de agentes.\n\nO que vamos resolver hoje?\n\n- `Analise meus gastos e encontre duplicados` (financeiro + dados)\n- `Monte um relatório do Vasco` (pesquisa + redação)\n- `Abra os arquivos do projeto` (workspace)\n\nÉ só conversar — eu delego, executo, valido e te trago o resultado. 🐟",
+  time: Date.now(),
+  status: "done",
+};
+
+const INITIAL_THREADS: Record<string, ChatMessage[]> = { nemo: [NEMO_GREETING] };
+
+export function seedThread(agentId: string): ChatMessage {
+  const agent = getAgent(agentId);
+  return {
+    id: uid("msg"),
+    role: "agent",
+    agentId,
+    content: `Olá! 👋 Sou **${agent.name}** — ${agent.role}. Como posso ajudar?`,
+    time: Date.now(),
+    status: "done",
+  };
+}
 
 interface IdeStore {
   // config
@@ -44,11 +68,18 @@ interface IdeStore {
   liveStatus: LiveStatus;
   setLiveStatus: (patch: Partial<LiveStatus>) => void;
 
-  // chat
-  messages: ChatMessage[];
-  addUserMessage: (content: string) => string;
-  insertAgentMessage: (m: Omit<ChatMessage, "id" | "time" | "status">) => string;
-  patchMessage: (id: string, patch: Partial<ChatMessage>) => void;
+  // chat por agente (threads independentes)
+  threads: Record<string, ChatMessage[]>;
+  addUserMessage: (agentId: string, content: string) => string;
+  insertAgentMessage: (agentId: string, m: Omit<ChatMessage, "id" | "time" | "status">) => string;
+  patchMessage: (agentId: string, id: string, patch: Partial<ChatMessage>) => void;
+
+  // calendário / eventos
+  events: CalendarEvent[];
+  setEvents: (events: CalendarEvent[]) => void;
+  addEvent: (e: Omit<CalendarEvent, "id" | "createdAt">) => string;
+  updateEvent: (id: string, patch: Partial<CalendarEvent>) => void;
+  deleteEvent: (id: string) => void;
 
   // workspace
   workspacePath: string;
@@ -86,13 +117,17 @@ interface IdeStore {
   addHistory: (h: Omit<HistoryItem, "id" | "time">) => void;
 }
 
+function withThread(get: () => IdeStore, agentId: string): ChatMessage[] {
+  return get().threads[agentId] ?? [];
+}
+
 export const useIdeStore = create<IdeStore>()(
   persist(
     (set, get) => ({
       config: DEFAULT_CONFIG,
       setConfig: (patch) => set((s) => ({ config: { ...s.config, ...patch } })),
 
-      activeView: "chat",
+      activeView: "dashboard",
       setView: (v) => set({ activeView: v }),
 
       rightOpen: true,
@@ -105,38 +140,57 @@ export const useIdeStore = create<IdeStore>()(
       activeAgentId: "nemo",
       setActiveAgent: (id) => {
         set({ activeAgentId: id });
+        set((s) => ({ threads: { ...s.threads, [id]: s.threads[id] ?? [seedThread(id)] } }));
         get().addLog({ tone: "agent", agentId: id, text: `${getAgent(id).name} selecionado no chat` });
       },
       liveStatus: { agentId: "nemo", label: "🟢 Online", phrase: "", busy: false },
       setLiveStatus: (patch) => set((s) => ({ liveStatus: { ...s.liveStatus, ...patch } })),
 
-      messages: [
-        {
-          id: uid("msg"),
-          role: "agent",
-          agentId: "nemo",
-          content:
-            "Bom dia! 👋 Sou o **NEMO**, coordenador da sua equipe de agentes.\n\nO que vamos resolver hoje?\n\n- `Analise meus gastos e encontre duplicados` (financeiro + dados)\n- `Monte um relatório do Vasco` (pesquisa + redação)\n- `Abra os arquivos do projeto` (workspace)\n\nÉ só conversar — eu delego, executo, valido e te trago o resultado. 🐟",
-          time: Date.now(),
-          status: "done",
-        },
-      ],
-      addUserMessage: (content) => {
+      threads: INITIAL_THREADS,
+      addUserMessage: (agentId, content) => {
         const id = uid("msg");
         set((s) => ({
-          messages: [...s.messages, { id, role: "user", agentId: "user", content, time: Date.now(), status: "done" }],
+          threads: {
+            ...s.threads,
+            [agentId]: [...withThread(get, agentId), { id, role: "user", agentId: "user", content, time: Date.now(), status: "done" }],
+          },
         }));
         return id;
       },
-      insertAgentMessage: (m) => {
+      insertAgentMessage: (agentId, m) => {
         const id = uid("msg");
         set((s) => ({
-          messages: [...s.messages, { ...m, id, time: Date.now(), status: "typing", phases: [] }],
+          threads: {
+            ...s.threads,
+            [agentId]: [...withThread(get, agentId), { ...m, id, time: Date.now(), status: "typing", phases: [] }],
+          },
         }));
         return id;
       },
-      patchMessage: (id, patch) =>
-        set((s) => ({ messages: s.messages.map((m) => (m.id === id ? { ...m, ...patch } : m)) })),
+      patchMessage: (agentId, id, patch) =>
+        set((s) => ({
+          threads: {
+            ...s.threads,
+            [agentId]: (s.threads[agentId] ?? []).map((m) => (m.id === id ? { ...m, ...patch } : m)),
+          },
+        })),
+
+      events: [],
+      setEvents: (events) => set({ events }),
+      addEvent: (e) => {
+        const id = uid("evt");
+        const event: CalendarEvent = { ...e, id, createdAt: Date.now() };
+        set((s) => ({ events: [...s.events, event] }));
+        get().addLog({ tone: "ok", text: `Evento criado: ${e.title}` });
+        get().addHistory({ kind: "task", title: e.title, detail: `${e.date} ${e.time} · ${getAgent(e.agentId).name}` });
+        return id;
+      },
+      updateEvent: (id, patch) =>
+        set((s) => ({ events: s.events.map((ev) => (ev.id === id ? { ...ev, ...patch } : ev)) })),
+      deleteEvent: (id) => {
+        set((s) => ({ events: s.events.filter((ev) => ev.id !== id) }));
+        get().addLog({ tone: "warn", text: "Evento removido do calendário" });
+      },
 
       workspacePath: "",
       setWorkspacePath: (p) => set({ workspacePath: p }),
@@ -203,6 +257,8 @@ export const useIdeStore = create<IdeStore>()(
       partialize: (s) => ({
         config: s.config,
         activeAgentId: s.activeAgentId,
+        threads: s.threads,
+        events: s.events,
       }),
     },
   ),

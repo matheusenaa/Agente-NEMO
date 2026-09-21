@@ -1,6 +1,7 @@
 import type { ChatMessage } from "@/types/idea";
 import { getAgent } from "@/data/agents";
 import { renderMarkdown } from "@/lib/markdown";
+import { AgentAvatar } from "@/components/AgentAvatar";
 
 interface Props {
   message: ChatMessage;
@@ -17,12 +18,7 @@ export function MessageBubble({ message, showTimestamps }: Props) {
   return (
     <div className={`msg ${isUser ? "user" : ""}`}>
       {!isUser && agent && (
-        <div
-          className="agent-ava"
-          style={{ background: agent.color, width: 32, height: 32, fontSize: 15, flexShrink: 0 }}
-          dangerouslySetInnerHTML={{ __html: agent.icon }}
-          title={agent.name}
-        />
+        <AgentAvatar id={agent.id} accent={agent.color} size={32} badge={agent.icon} title={agent.name} />
       )}
 
       <div className="body">

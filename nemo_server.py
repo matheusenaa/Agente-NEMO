@@ -102,6 +102,8 @@ AGENTS_DIR = ROOT / "agents"
 SQUADS_DIR = ROOT / "squads"
 SKILLS_DIR = ROOT / "skills"
 DASHBOARD_DIST = ROOT / "dashboard" / "dist"
+DATA_DIR = ROOT / "_data"
+EVENTS_FILE = DATA_DIR / "events.json"
 
 DEFAULT_HOST = os.getenv("HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.getenv("PORT", "8798"))
@@ -331,6 +333,35 @@ def _run_command(command: str, force: bool = False, timeout: int = 60) -> Dict[s
             "stderr": "",
             "code": None,
         }
+
+
+def _load_events() -> List[Dict[str, Any]]:
+    """Carrega os eventos do calendário a partir do arquivo local (events.json)."""
+    if not EVENTS_FILE.is_file():
+        return []
+    try:
+        data = json.loads(EVENTS_FILE.read_text(encoding="utf-8", errors="replace"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _save_events(events: List[Dict[str, Any]]) -> None:
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        EVENTS_FILE.write_text(json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"Não foi possível persistir eventos: {exc}")
+
+
+def _normalize_event(event: Dict[str, Any]) -> Dict[str, Any]:
+    base = {
+        "id": "", "title": "", "description": "", "date": "", "time": "09:00",
+        "durationMin": 60, "category": "outro", "agentId": "nemo", "remind": 15,
+        "createdAt": int(time.time() * 1000),
+    }
+    base.update({k: v for k, v in event.items() if v is not None and v != ""})
+    return base
 
 
 def _squads_snapshot() -> Dict[str, Any]:
@@ -642,6 +673,72 @@ def models():
 @app.get("/api/nemo/snapshot")
 def snapshot() -> Dict[str, Any]:
     return _squads_snapshot()
+
+
+@app.get("/api/nemo/events")
+def list_events() -> List[Dict[str, Any]]:
+    """Lista os eventos do calendário da equipe (persistidos em _data/events.json)."""
+    return _load_events()
+
+
+class EventRequest(BaseModel):
+    id: Optional[str] = None
+    title: str = ""
+    description: str = ""
+    date: str = ""
+    time: str = "09:00"
+    durationMin: int = 60
+    category: str = "outro"
+    agentId: str = "nemo"
+    remind: int = 15
+    createdAt: Optional[int] = None
+
+
+@app.post("/api/nemo/events")
+def create_event(req: EventRequest) -> Dict[str, Any]:
+    events = _load_events()
+    new_event = _normalize_event({
+        "id": req.id or f"evt-{int(time.time() * 1000)}",
+        "title": req.title.strip() or "Sem título",
+        "description": req.description,
+        "date": req.date,
+        "time": req.time,
+        "durationMin": max(5, min(req.durationMin or 60, 1440)),
+        "category": req.category or "outro",
+        "agentId": req.agentId or "nemo",
+        "remind": int(req.remind or 0),
+        "createdAt": req.createdAt or int(time.time() * 1000),
+    })
+    events = [e for e in events if e.get("id") != new_event["id"]]
+    events.append(new_event)
+    _save_events(events)
+    return new_event
+
+
+@app.put("/api/nemo/events/{event_id}")
+def update_event(event_id: str, req: EventRequest) -> Dict[str, Any]:
+    events = _load_events()
+    updated: Optional[Dict[str, Any]] = None
+    for i, ev in enumerate(events):
+        if ev.get("id") == event_id:
+            merged = {**ev, **{k: v for k, v in req.model_dump(exclude_unset=True).items() if v is not None and v != ""}}
+            events[i] = _normalize_event(merged)
+            updated = events[i]
+            break
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Evento não encontrado.")
+    _save_events(events)
+    return updated
+
+
+@app.delete("/api/nemo/events/{event_id}")
+def delete_event(event_id: str) -> Dict[str, Any]:
+    events = _load_events()
+    remaining = [e for e in events if e.get("id") != event_id]
+    if len(remaining) == len(events):
+        raise HTTPException(status_code=404, detail="Evento não encontrado.")
+    _save_events(remaining)
+    return {"ok": True, "deleted": event_id}
 
 
 @app.get("/api/nemo/auth")

@@ -1,4 +1,4 @@
-import type { FileNode, OpenFile } from "@/types/idea";
+import type { CalendarEvent, FileNode, OpenFile } from "@/types/idea";
 
 const BASE = "/api/nemo";
 
@@ -76,5 +76,17 @@ export const nemoApi = {
   },
   async snapshot(): Promise<unknown> {
     return request("/snapshot");
+  },
+  async listEvents(): Promise<CalendarEvent[]> {
+    return request("/events");
+  },
+  async createEvent(e: Omit<CalendarEvent, "createdAt">): Promise<CalendarEvent> {
+    return request("/events", { method: "POST", body: JSON.stringify(e) });
+  },
+  async updateEvent(id: string, patch: Partial<CalendarEvent>): Promise<CalendarEvent> {
+    return request(`/events/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(patch) });
+  },
+  async deleteEvent(id: string): Promise<{ ok: boolean; deleted: string }> {
+    return request(`/events/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 };

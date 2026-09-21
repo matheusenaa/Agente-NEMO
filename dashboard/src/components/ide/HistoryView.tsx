@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useIdeStore } from "@/store/useIdeStore";
 import { getAgent } from "@/data/agents";
+import { AgentAvatar } from "@/components/AgentAvatar";
 
 const KIND_ICON: Record<string, string> = {
   chat: "💬", file: "📄", task: "✅", terminal: "🖥️", config: "⚙️",
@@ -63,7 +64,7 @@ export function HistoryView() {
             <div key={h.id} className="hist-row" onClick={() => apply(h)} style={{ cursor: "pointer" }} title="Reabrir">
               <span className="ht">{new Date(h.time).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}</span>
               <span>{KIND_ICON[h.kind]}</span>
-              {agent && <span dangerouslySetInnerHTML={{ __html: agent.icon }} />}
+              {agent && <AgentAvatar id={agent.id} accent={agent.color} size={22} badge={agent.icon} />}
               <span style={{ fontWeight: 600 }}>{h.title}</span>
               <span style={{ color: "var(--text2)", flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {h.detail}

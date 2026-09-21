@@ -12,6 +12,7 @@ const OFFLINE_RESPONSES: Record<string, string> = {
 };
 
 export function useNemoChat() {
+  const threads = useIdeStore((s) => s.threads);
   const addUserMessage = useIdeStore((s) => s.addUserMessage);
   const insertAgentMessage = useIdeStore((s) => s.insertAgentMessage);
   const patchMessage = useIdeStore((s) => s.patchMessage);
@@ -27,7 +28,7 @@ export function useNemoChat() {
   const send = useCallback(
     async (agentId: string, content: string) => {
       const agent = getAgent(agentId);
-      addUserMessage(content);
+      addUserMessage(agentId, content);
       addLog({ tone: "agent", agentId, text: `${agent.name} iniciou: ${content.slice(0, 70)}` });
       addHistory({ kind: "chat", title: agent.name, agentId: agent.id, detail: content.slice(0, 120) });
 
@@ -41,15 +42,20 @@ export function useNemoChat() {
       }, 2600);
       phraseRef.current = "";
 
-      const msgId = insertAgentMessage({ role: "agent", agentId, content: "" });
+      const msgId = insertAgentMessage(agentId, { role: "agent", agentId, content: "" });
       let ok = false;
       let offline = false;
+      // Histórico da conversa com esse agente (sem a última msg do usuário duplicar)
+      const history: string[] = (threads[agentId] ?? [])
+        .map((m) => m.content)
+        .filter((c) => c && c !== content)
+        .slice(-12);
       try {
-        const res = await nemoApi.chat(agentId, content, [], agent.defaultModel);
+        const res = await nemoApi.chat(agentId, content, history, agent.defaultModel);
         if (res.ok) {
           ok = true;
           offline = !!res.offline;
-          patchMessage(msgId, {
+          patchMessage(agentId, msgId, {
             content: res.content,
             status: "done",
             meta: { model: res.model_used, latencyMs: res.latency_ms, isFallback: res.is_fallback, promptTokens: res.prompt_tokens, completionTokens: res.completion_tokens },
@@ -57,11 +63,11 @@ export function useNemoChat() {
           addLog({ tone: "warn", agentId, text: res.offline ? `Chave OpenRouter inválida/expirada — resposta offline gerada` : `${agent.name}: respondido (${res.model_used}, ${res.latency_ms ?? 0}ms)` });
           notify({ icon: agent.icon, text: `${agent.name} respondeu`, tone: res.offline ? "warn" : "ok" });
         } else {
-          patchMessage(msgId, { content: res.error ?? "Erro desconhecido.", status: "error" });
+          patchMessage(agentId, msgId, { content: res.error ?? "Erro desconhecido.", status: "error" });
           addLog({ tone: "error", agentId, text: `${agent.name}: ${(res.error ?? "").slice(0, 140)}` });
         }
       } catch {
-        patchMessage(msgId, { content: OFFLINE_RESPONSES[agentId] ?? OFFLINE_RESPONSES.default, status: "done" });
+        patchMessage(agentId, msgId, { content: OFFLINE_RESPONSES[agentId] ?? OFFLINE_RESPONSES.default, status: "done" });
         addLog({ tone: "warn", agentId, text: "Servidor NEMO não respondeu — resposta offline gerada" });
       }
 
@@ -73,7 +79,7 @@ export function useNemoChat() {
         window.setTimeout(() => updateTask(t, ok ? { status: "done" } : { status: "error" }), ok ? 1000 : 300);
       }
     },
-    [addUserMessage, addHistory, addLog, insertAgentMessage, patchMessage, setLiveStatus, addTask, updateTask, notify, funnyStatus],
+    [threads, addUserMessage, addHistory, addLog, insertAgentMessage, patchMessage, setLiveStatus, addTask, updateTask, notify, funnyStatus],
   );
 
   return { send };

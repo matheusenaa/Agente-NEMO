@@ -3,6 +3,14 @@ Testes unitários automatizados para o OpenRouterClient e ModelsConfig.
 Valida inicialização de headers, detecção de chave, mapeamento de fallbacks e retries.
 """
 
+import sys
+from pathlib import Path
+
+# Garante que a raiz do projeto esteja no sys.path independente do ambiente
+ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import unittest
 from unittest.mock import patch, MagicMock
 from openai import NotFoundError

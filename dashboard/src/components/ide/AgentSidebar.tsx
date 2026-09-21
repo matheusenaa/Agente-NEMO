@@ -1,6 +1,7 @@
 import { AGENT_ROSTER } from "@/data/agents";
 import { useIdeStore } from "@/store/useIdeStore";
 import { useSquadStore } from "@/store/useSquadStore";
+import { AgentAvatar } from "@/components/AgentAvatar";
 
 export function AgentSidebar() {
   const activeAgentId = useIdeStore((s) => s.activeAgentId);
@@ -39,11 +40,14 @@ export function AgentSidebar() {
               }}
               title={a.description}
             >
-              <div
-                className={`agent-ava ${isLive ? "live" : ""}`}
-                style={{ background: a.color }}
-                dangerouslySetInnerHTML={{ __html: a.icon }}
-              />
+              <div style={{ position: "relative", display: "flex" }}>
+                <AgentAvatar id={a.id} accent={a.color} size={34} badge={a.icon} />
+                {isLive && (
+                  <span
+                    style={{ position: "absolute", bottom: -1, right: -1, width: 10, height: 10, borderRadius: "50%", background: "var(--success)", border: "2px solid var(--bg1)", animation: "pulse 1.4s infinite" }}
+                  />
+                )}
+              </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="agent-name">{a.name}</div>
                 <div className="agent-role">{a.role}</div>

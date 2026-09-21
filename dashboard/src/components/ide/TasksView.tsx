@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useIdeStore } from "@/store/useIdeStore";
 import { getAgent, PRIORITY_ICON } from "@/data/agents";
+import { AgentAvatar } from "@/components/AgentAvatar";
 import type { TaskItem, TaskStatus } from "@/types/idea";
 
 const STATUS_TEXT: Record<TaskStatus, string> = {
@@ -73,7 +74,7 @@ export function TasksView() {
                   {t.status === "done" ? "✓" : ""}
                 </span>
               </button>
-              {agent && <span dangerouslySetInnerHTML={{ __html: agent.icon }} style={{ width: 20, textAlign: "center" }} />}
+              {agent && <AgentAvatar id={agent.id} accent={agent.color} size={22} badge={agent.icon} />}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600, wordBreak: "break-word" }}>{t.title}</div>
                 <div style={{ display: "flex", gap: 10, fontSize: 11, color: "var(--text3)", marginTop: 2 }}>

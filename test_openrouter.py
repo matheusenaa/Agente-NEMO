@@ -16,7 +16,14 @@ if sys.platform == "win32":
         pass
 
 import argparse
+from pathlib import Path
 from typing import List
+
+# Garante que a raiz do projeto esteja no sys.path independente do ambiente
+ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel

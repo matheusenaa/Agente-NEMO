@@ -4,9 +4,11 @@ import { useSquadSocket } from "@/hooks/useSquadSocket";
 import { getTheme } from "@/data/themes";
 import { TopBar } from "./TopBar";
 import { AgentSidebar } from "./AgentSidebar";
+import { DashboardView } from "./DashboardView";
 import { ChatView } from "./ChatView";
 import { WorkspaceView } from "./WorkspaceView";
 import { OfficeView } from "./OfficeView";
+import { CalendarView } from "./CalendarView";
 import { TerminalView } from "./TerminalView";
 import { TasksView } from "./TasksView";
 import { HistoryView } from "./HistoryView";
@@ -64,9 +66,11 @@ export function AppShell() {
   }, [config.theme, config.density, config.animations, config.fontSize]);
 
   const viewMap: Record<string, ReactNode> = {
+    dashboard: <DashboardView />,
     chat: <ChatView />,
     workspace: <WorkspaceView />,
     office: <OfficeView />,
+    calendar: <CalendarView />,
     terminal: <TerminalView />,
     tasks: <TasksView />,
     history: <HistoryView />,

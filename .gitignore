@@ -40,6 +40,9 @@ squads/**/output/**/*.pdf
 squads/**/output/**/*.xlsx
 squads/**/output/**/*.pbit
 squads/**/state.json
+
+# Runtime data (NEMO events calendar, etc.)
+_data/
 # Build artifacts
 dashboard/dist/
 *.tsbuildinfo
