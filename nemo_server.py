@@ -662,6 +662,24 @@ def chat(req: ChatRequest) -> Dict[str, Any]:
             "offline": True,
             "latency_ms": latency_ms,
         }
+    if _is_connection_error(result.error_message or ""):
+        # OpenRouter inacessível (sem internet / firewall / rede bloqueada) →
+        # mesma resposta graciosa offline, sem expor erro cru de rede.
+        return {
+            "ok": True,
+            "agent": req.agent,
+            "content": (
+                "⚠️ Não consegui acessar o OpenRouter agora (rede indisponível ou bloqueada), "
+                "então não consigo chamar modelos de IA no momento. 🐟\n\n"
+                "Para voltar a responder de verdade:\n"
+                "1. Verifique sua conexão com a internet (e se a rede/firewall permite `openrouter.ai`).\n"
+                "2. Confirme que `OPENROUTER_API_KEY` está válida no `.env` e reinicie o servidor.\n\n"
+                "Enquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro."),
+            "model_used": result.model_used or model,
+            "is_fallback": True,
+            "offline": True,
+            "latency_ms": latency_ms,
+        }
     return {
         "ok": False,
         "agent": req.agent,
@@ -672,11 +690,23 @@ def chat(req: ChatRequest) -> Dict[str, Any]:
 
 
 def _is_auth_error(message: str) -> bool:
-    """Detecta erros de autenticação/credencial do OpenRouter na mensagem de erro."""
+    """Detecta erros de autentica��o/credencial do OpenRouter na mensagem de erro."""
     lowered = (message or "").lower()
     markers = [
         "401", "unauthorized", "authentication", "auth", "api key",
         "invalid", "expirad", "expired", "invalid_api_key", "insufficient",
+    ]
+    return any(m in lowered for m in markers)
+
+
+def _is_connection_error(message: str) -> bool:
+    """Detecta falhas de rede (sem internet/OpenRouter inacessível/timeouts) na mensagem de erro."""
+    lowered = (message or "").lower()
+    markers = [
+        "apiconnectionerror", "connection error", "connectionerror",
+        "connection reset", "reseterror", "reset", "timeout", "timed out",
+        "dns", "max retries", "cannot connect", "network", "connection aborted",
+        "unreachable", "ssl", "tls", "failed to resolve",
     ]
     return any(m in lowered for m in markers)
 

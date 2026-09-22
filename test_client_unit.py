@@ -17,6 +17,7 @@ from openai import NotFoundError
 
 from models_config import get_all_models, get_model_by_id, ModelInfo
 from openrouter_client import OpenRouterClient, CompletionResult
+from nemo_server import _is_auth_error, _is_connection_error
 
 class TestOpenRouterIntegration(unittest.TestCase):
 
@@ -129,6 +130,62 @@ class TestOpenRouterIntegration(unittest.TestCase):
             self.assertTrue(result.is_fallback)
             self.assertEqual(result.content, "OK claude-sonnet-4")
             self.assertEqual(result.total_tokens, 20)
+
+    def test_error_detectors_auth_and_connection(self):
+        """Verifica que os detectores distinguem erro 401 (chave) de falha de rede."""
+        # Casos que DEVEM ser tratados como erro de autenticação
+        auth_cases = [
+            "Erro da API OpenRouter (AuthenticationError): Invalid API key",
+            "HTTP 401 Unauthorized para openrouter.ai",
+            "openai.InvalidAPIKeyError: AuthenticationError",
+            "Chave expirada (401)",
+        ]
+        for msg in auth_cases:
+            self.assertTrue(_is_auth_error(msg), f"deveria detectar auth: {msg}")
+            self.assertFalse(_is_connection_error(msg), f"não é erro de rede: {msg}")
+
+        # Casos que DEVEM ser tratados como falha de rede
+        conn_cases = [
+            "Erro da API OpenRouter (APIConnectionError): Connection error.",
+            "ConnectionError: timed out",
+            "Falha de conexão com OpenRouter: ConnectionResetError(10054)",
+            "não foi possível resolver o host openrouter.ai (DNS)",
+        ]
+        for msg in conn_cases:
+            self.assertTrue(_is_connection_error(msg), f"deveria detectar rede: {msg}")
+            self.assertFalse(_is_auth_error(msg), f"não é erro de auth: {msg}")
+
+    def test_chat_offline_on_connection_blocked(self):
+        """Rede bloqueada com chave válida → resposta graciosa offline, não erro cru."""
+        import nemo_server as ns
+
+        client = OpenRouterClient(api_key="sk-or-v1-mocked-key-for-testing")
+        blocked = CompletionResult(
+            success=False,
+            content="",
+            model_used="deepseek/deepseek-chat",
+            original_model="deepseek/deepseek-chat",
+            is_fallback=False,
+            latency_ms=2200.0,
+            error_message="Erro da API OpenRouter (APIConnectionError): Connection error.",
+        )
+
+        from fastapi.testclient import TestClient
+        from nemo_server import app
+
+        with patch.object(ns, "get_client", return_value=client):
+            with patch.object(client, "chat_completion", return_value=blocked):
+                tc = TestClient(app)
+                resp = tc.post(
+                    "/api/nemo/chat",
+                    json={"agent": "analista", "message": "oi", "messages": [], "max_tokens": 200},
+                )
+                self.assertEqual(resp.status_code, 200)
+                data = resp.json()
+                self.assertTrue(data["ok"])
+                self.assertTrue(data["offline"])
+                self.assertTrue(data["is_fallback"])
+
 
 if __name__ == "__main__":
     unittest.main()
