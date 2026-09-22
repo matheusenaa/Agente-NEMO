@@ -302,6 +302,7 @@ Criados:
 | Pacote distribuível `NEMO_IDE_Distribuivel.zip` | ✅ PASS | 38.5 MB com `NEMO_IDE/` + launchers (run_backend, start_nemo, start_nemo_dev, run_dashboard_dev) |
 | **Polish final pós-merge (round de consistência)** | ✅ PASS | Tarefas criadas via chat nascem `running` e viram done/error após a resposta (▶ Exec/dock rich ficam preenchidos); rosters com nome real dos `.agent.md` (Ana Análise, Rebeca Referência, Miguel Motion etc.); LogsView mostra o ícone do agente dono do log (antes fixo 🐟); `dashboard/dist`, exe e ZIP reconstruídos |
 | Rebuild final pós-polish | ✅ PASS | `dist/NEMO_IDE` + `NEMO_IDE_Distribuivel.zip` (38.47 MB) regenerados; máquina limpa: health `agents:12/squads:1/models:10`, files/squads OK, root 200 `hasApp:true`, `api_key_configured:false` (cwd no pacote; `.env` nunca entra no bundle) |
+| **Chat offline gracioso com rede bloqueada** | ✅ PASS | Novo `_is_connection_error()`: com chave válida mas OpenRouter inacessível (firewall/timeout/DNS — ex.: rede INEP), o chat responde `ok:true offline:true` com mensagem amigável em PT-BR em vez de erro cru `APIConnectionError`. Testado ao vivo (8799) e via TestClient. Testes 5→7 |
 
 **Git (Missão 3):**
 ```
@@ -321,6 +322,12 @@ d254b99 fix(ide): remove calendario duplicado morto (calendarEvents) e barra de 
 f4d3cd2 fix(ide): ContextPanel troca barra de progresso fake por indicador honesto de conclusao
 ```
 > Tudo enviado para `origin/main`; `dist/` e ZIP regenerados com o frontend final.
+
+**Missão 3, terceiro lote:**
+```
+481d118 feat(server): chat offline gracioso quando OpenRouter inacessivel (rede bloqueada)
+```
+> `dist/` e ZIP regenerados com o backend final (testes 7/7 OK, bundle re-validado em máquina limpa).
 
 ---
 
