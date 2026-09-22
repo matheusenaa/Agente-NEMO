@@ -279,6 +279,32 @@ Criados:
 
 ---
 
+### Missão 3 (2026-09-22) — sync GitHub, tarefas em execução e backend dedup
+
+> **Objetivo**: integrar a versão do GitHub no repositório local (7 conflitos resolvidos
+> mantendo a implementação local como base e incorporando os ganhos do GitHub), finalizar
+> as tarefas restantes e validar todo o fluxo.
+
+| Tarefa | Status | Evidência |
+|--------|--------|-----------|
+| Merge `origin/main` no local (5 commits à frente × 3 commits divergentes) | ✅ PASS | `4bf0060` — conflitos resolvidos em 7 arquivos (ChatView, AgentSidebar, DashboardView, agents.ts, useIdeStore.ts, ide.css, idea.ts) |
+| Views PT adotadas do GitHub (`agentes`, `conversas`, `calendario`) | ✅ PASS | `viewMap` no AppShell mapeia os aliases para OfficeView/ChatView/CalendarView |
+| Arquivos órfãos do GitHub removidos (quebravam `tsc -b`) | ✅ PASS | `calendar/calendar.tsx`, `ide/AgentAvatar.tsx`, `data/avatars.ts` |
+| Seção "▶ Em execução" no Dashboard + agentes ocupados no dock/escritório | ✅ PASS | DashboardView (runningTaskItems), OfficeView (busyAgents), PhaserGame `emitActivity` inclui tarefas |
+| Remoção da barra de progresso fake do RunningView | ✅ PASS | Indicador honesto (ponto pulsante + "aguardando conclusão") + helper `getAgentName` |
+| Backend: 2º bloco de endpoints `/api/nemo/events` removido | ✅ PASS | Um único schema `EventRequest` (linha ~480) e um único CRUD persistindo em `_data/events.json` |
+| Testes | ✅ PASS | `py_compile` 0, `test_client_unit.py` 5/5, `npm run build` exit 0 (84 módulos, 7.4s) |
+| Smoke test com servidor real (porta 8799) | ✅ PASS | health `agents:12/squads:1/models:10`; agents/context/models/snapshot/auth/files/root 200; chat offline `offline:true`; CRUD de eventos create→update→delete; terminal seguro/destrutivo/forçado; file save/read |
+
+**Git (Missão 3):**
+```
+ac6693d feat: agentes ocupados com tarefas em execucao + backend eventos deduplicado
+4bf0060 merge: integrar versao do GitHub (aliases views pt + responsividade + validacao)
+```
+> Ambos enviados para `origin/main` (público). Branch limpa e sincronizada.
+
+---
+
 ## 12. Git (Commits Enviados)
 
 ```
