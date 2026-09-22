@@ -95,7 +95,6 @@ export function AppShell() {
     history: <HistoryView />,
     settings: <SettingsView />,
     agentes: <OfficeView />,
-    conversas: <ChatView />,
     calendario: <CalendarView />,
   };
 
