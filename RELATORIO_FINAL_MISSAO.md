@@ -298,6 +298,8 @@ Criados:
 | Rebuild do executável `dist/NEMO_IDE/` | ✅ PASS | PyInstaller 6.22.3 instalado via pip (pypi liberado); bundle 25.4 MB; health `agents:12/squads:1/models:10`; root 200; CRUD eventos; terminal `echo BUNDLE_OK`; agents/ 12 + squads + dashboard no bundle |
 | **Bug frozen novo: ROOT com short name** | ✅ PASS | `sys._MEIPASS` retorna caminho curto (`MATHEU~1.SIL`) → `_get_project_root()` agora aplica `.resolve()` para normalizar para `matheus.silva`; sem isso `/api/nemo/files` retornava 400 "Caminho fora do diretório" no bundle |
 | Nova chave OpenRouter configurada no `.env` | ⚠️ Rede INEP bloqueia | `openrouter.ai` inacessível da máquina (DNS do subdomínio não resolve; TLS reset). `.env` criado/ignorado; validar de outra rede (hotspot/VPN/Render) |
+| Validação em "máquina limpa" (diretório alternativo) | ✅ PASS | ZIP `NEMO_IDE_Distribuivel.zip` (38.5 MB) extraído em `%TEMP%` e exe rodado: health `agents:12/squads:1/models:10`, files/squads OK, root 200. `api_key_configured:false` esperado (chave não vai no ZIP) |
+| Pacote distribuível `NEMO_IDE_Distribuivel.zip` | ✅ PASS | 38.5 MB com `NEMO_IDE/` + launchers (run_backend, start_nemo, start_nemo_dev, run_dashboard_dev) |
 
 **Git (Missão 3):**
 ```
