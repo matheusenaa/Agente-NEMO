@@ -198,11 +198,14 @@ export const LAYOUTS: { id: string; label: string; desc: string }[] = [
 
 export const VIEWS: { id: string; icon: string; label: string }[] = [
   { id: "dashboard", icon: "📊", label: "Dashboard" },
-  { id: "chat", icon: "💬", label: "Chat" },
+  { id: "agentes", icon: "🐟", label: "Agentes" },
   { id: "office", icon: "🏢", label: "Escritório" },
-  { id: "calendar", icon: "📅", label: "Calendário" },
-  { id: "tasks", icon: "✅", label: "Tasks" },
+  { id: "conversas", icon: "💬", label: "Conversas" },
+  { id: "calendario", icon: "📅", label: "Calendário" },
+  { id: "tasks", icon: "✅", label: "Tarefas" },
+  { id: "settings", icon: "⚙️", label: "Configurações" },
+  { id: "chat", icon: "💬", label: "Chat" },
   { id: "workspace", icon: "📁", label: "Workspace" },
+  { id: "terminal", icon: "⌨️", label: "Terminal" },
   { id: "history", icon: "🕘", label: "Histórico" },
-  { id: "settings", icon: "⚙️", label: "Config" },
 ];

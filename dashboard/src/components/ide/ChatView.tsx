@@ -65,7 +65,7 @@ export function ChatView() {
   return (
     <section className="view-area">
       <div className="chat-head">
-        <AgentAvatar id={agent.id} accent={agent.color} size={34} badge={agent.icon} title={agent.name} />
+<AgentAvatar id={agent.id} accent={agent.color} size={34} badge={agent.icon} title={agent.name} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 14 }}>Chat com {agent.name}</div>
           <div className="live-line">

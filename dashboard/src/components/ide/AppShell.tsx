@@ -67,6 +67,22 @@ export function AppShell() {
     if (fav) fav.href = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐟</text></svg>`;
   }, [config.theme, config.density, config.animations, config.fontSize]);
 
+  useEffect(() => {
+    const onVis = () => {
+      document.body.classList.toggle("no-anim", config.animations ? document.hidden : true);
+    };
+    onVis();
+    document.addEventListener("visibilitychange", onVis);
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onMotion = () => document.body.classList.toggle("no-anim", mq.matches || !config.animations);
+    onMotion();
+    mq.addEventListener?.("change", onMotion);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      mq.removeEventListener?.("change", onMotion);
+    };
+  }, [config.animations]);
+
   const viewMap: Record<string, ReactNode> = {
     dashboard: <DashboardView />,
     chat: <ChatView />,
@@ -77,6 +93,9 @@ export function AppShell() {
     tasks: <TasksView />,
     history: <HistoryView />,
     settings: <SettingsView />,
+    agentes: <OfficeView />,
+    conversas: <ChatView />,
+    calendario: <CalendarView />,
   };
 
   return (

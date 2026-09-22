@@ -1,4 +1,4 @@
-import { useIdeStore } from "@/store/useIdeStore";
+﻿import { useIdeStore } from "@/store/useIdeStore";
 import { useSquadStore } from "@/store/useSquadStore";
 import { AGENT_ROSTER, getAgent } from "@/data/agents";
 import type { ViewId } from "@/types/idea";
@@ -60,16 +60,16 @@ export function DashboardView() {
     <section className="view-area dash-wrap">
       <div className="dash-hero">
         <div className="dash-hero-text">
-          <div className="dash-eyebrow">CENTRAL DE OPERAÇÕES</div>
-          <h1>Bem-vindo à NEMO IDE</h1>
+          <div className="dash-eyebrow">CENTRAL DE OPERA├ç├òES</div>
+          <h1>Bem-vindo ├á NEMO IDE</h1>
           <p>
-            Sua equipe de agentes está pronta. Converse, agende, trabalhe — tudo num ambiente único.
-            {liveStatus.busy && <span className="dash-live"> {getAgent(liveStatus.agentId).name} está {liveStatus.label}</span>}
+            Sua equipe de agentes est├í pronta. Converse, agende, trabalhe ÔÇö tudo num ambiente ├║nico.
+            {liveStatus.busy && <span className="dash-live"> {getAgent(liveStatus.agentId).name} est├í {liveStatus.label}</span>}
           </p>
           <div className="dash-actions">
-            <button className="tool-btn primary" onClick={() => chatWith("nemo")}>💬 Conversar com NEMO</button>
-            <button className="tool-btn" onClick={() => go("office")}>🏢 Abrir escritório</button>
-            <button className="tool-btn" onClick={() => go("calendar")}>📅 Novo evento</button>
+            <button className="tool-btn primary" onClick={() => chatWith("nemo")}>­ƒÆ¼ Conversar com NEMO</button>
+            <button className="tool-btn" onClick={() => go("office")}>­ƒÅó Abrir escrit├│rio</button>
+            <button className="tool-btn" onClick={() => go("calendar")}>­ƒôà Novo evento</button>
           </div>
         </div>
         <div className="dash-hero-agent">
@@ -84,44 +84,44 @@ export function DashboardView() {
                 animation: liveStatus.busy ? "pulse 1.2s infinite" : "none",
               }}
             />
-            {liveStatus.busy ? liveStatus.label : "🟢 Online"}
+            {liveStatus.busy ? liveStatus.label : "­ƒƒó Online"}
           </div>
         </div>
       </div>
 
       <div className="dash-stats">
         <div className="stat-card" onClick={() => go("chat")}>
-          <div className="stat-ico">👥</div>
+          <div className="stat-ico">­ƒæÑ</div>
           <div className="stat-num">{AGENT_ROSTER.length}</div>
           <div className="stat-label">Agentes na equipe</div>
         </div>
         <div className="stat-card accent" onClick={() => go("office")}>
-          <div className="stat-ico">⚡</div>
+          <div className="stat-ico">ÔÜí</div>
           <div className="stat-num">{busyAgents.size}</div>
           <div className="stat-label">Em atividade</div>
         </div>
         <div className="stat-card" onClick={() => go("tasks")}>
-          <div className="stat-ico">✅</div>
+          <div className="stat-ico">Ô£à</div>
           <div className="stat-num">{openTasks + runningTasks}</div>
           <div className="stat-label">Tarefas abertas</div>
         </div>
         <div className="stat-card" onClick={() => go("calendar")}>
-          <div className="stat-ico">📅</div>
+          <div className="stat-ico">­ƒôà</div>
           <div className="stat-num">{todayEvents.length}</div>
           <div className="stat-label">Eventos hoje</div>
         </div>
         <div className="stat-card" onClick={() => go("history")}>
-          <div className="stat-ico">🔔</div>
+          <div className="stat-ico">­ƒöö</div>
           <div className="stat-num">{notifications.length}</div>
-          <div className="stat-label">Notificações</div>
+          <div className="stat-label">Notifica├º├Áes</div>
         </div>
       </div>
 
       <div className="dash-cols">
         <div className="dash-col">
-          <div className="card-tt">📅 Próximos eventos</div>
+          <div className="card-tt">­ƒôà Pr├│ximos eventos</div>
           <div className="dash-list">
-            {upcoming.length === 0 && <div className="dash-empty">Nenhum evento futuro. {pickPhrase(["Que tal agendar algo?", "Agende o próximo passo."], "")}</div>}
+            {upcoming.length === 0 && <div className="dash-empty">Nenhum evento futuro. {pickPhrase(["Que tal agendar algo?", "Agende o pr├│ximo passo."], "")}</div>}
             {upcoming.map((e) => {
               const cat = categoryMeta(e.category);
               const agent = getAgent(e.agentId);
@@ -131,14 +131,14 @@ export function DashboardView() {
                   <span className="dash-dot" style={{ background: cat.color }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="dash-row-title">{e.title}</div>
-                    <div className="dash-row-sub">{when} · {e.time} · {agent.name}</div>
+                    <div className="dash-row-sub">{when} ┬À {e.time} ┬À {agent.name}</div>
                   </div>
                 </button>
               );
             })}
           </div>
 
-          <div className="card-tt">🗨️ Conversas recentes</div>
+          <div className="card-tt">­ƒù¿´©Å Conversas recentes</div>
           <div className="dash-list">
             {recentChats.map((c) => {
               const agent = getAgent(c.agentId);
@@ -146,7 +146,7 @@ export function DashboardView() {
                 <button key={c.agentId} className="dash-row clickable" onClick={() => chatWith(c.agentId)}>
                   <AgentAvatar id={c.agentId} accent={agent.color} size={26} badge={agent.icon} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="dash-row-title">{agent.name} <span className="muted">· {new Date(c.last).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span></div>
+                    <div className="dash-row-title">{agent.name} <span className="muted">┬À {new Date(c.last).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span></div>
                     <div className="dash-row-sub" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.lastText.replace(/[#*`]/g, "")}</div>
                   </div>
                 </button>
@@ -156,7 +156,7 @@ export function DashboardView() {
         </div>
 
         <div className="dash-col">
-          <div className="card-tt">🤖 Agentes</div>
+          <div className="card-tt">­ƒñû Agentes</div>
           <div className="dash-agents">
             {AGENT_ROSTER.map((a) => {
               const isBusy = liveStatus.agentId === a.id && liveStatus.busy;
@@ -173,9 +173,9 @@ export function DashboardView() {
             })}
           </div>
 
-          <div className="card-tt">🎯 Missões recentes</div>
+          <div className="card-tt">­ƒÄ» Miss├Áes recentes</div>
           <div className="dash-list">
-            {recentMissions.length === 0 && <div className="dash-empty">Nenhuma missão delegada ainda. Peça uma tarefa em 📝 Tarefas.</div>}
+            {recentMissions.length === 0 && <div className="dash-empty">Nenhuma miss├úo delegada ainda. Pe├ºa uma tarefa em ­ƒôØ Tarefas.</div>}
             {recentMissions.map((m) => {
               const agent = getAgent(m.agentId);
               return (
@@ -183,7 +183,7 @@ export function DashboardView() {
                   <AgentAvatar id={m.agentId} accent={agent.color} size={26} badge={agent.icon} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="dash-row-title">{m.title}</div>
-                    <div className="dash-row-sub">{agent.name} · {new Date(m.time).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</div>
+                    <div className="dash-row-sub">{agent.name} ┬À {new Date(m.time).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</div>
                   </div>
                   <span style={{ color: "var(--text3)", fontSize: 11 }}>{m.detail}</span>
                 </button>
@@ -191,7 +191,7 @@ export function DashboardView() {
             })}
           </div>
 
-          <div className="card-tt">🪵 Atividade recente</div>
+          <div className="card-tt">­ƒ¬Á Atividade recente</div>
           <div className="dash-logs">
             {recentLogs.length === 0 && <div className="dash-empty">Sem atividade ainda.</div>}
             {recentLogs.map((l) => (
@@ -204,9 +204,9 @@ export function DashboardView() {
 
           {squads.size > 0 && (
             <div className="cb" style={{ marginTop: 14 }}>
-              <div className="card-tt">📋 Squads ({squads.size})</div>
+              <div className="card-tt">­ƒôï Squads ({squads.size})</div>
               <div style={{ fontSize: 12, color: "var(--text3)" }}>
-                {Array.from(squads.values()).slice(0, 4).map((s) => s.name).join(" · ")}
+                {Array.from(squads.values()).slice(0, 4).map((s) => s.name).join(" ┬À ")}
               </div>
             </div>
           )}

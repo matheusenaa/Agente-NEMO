@@ -40,7 +40,7 @@ export function AgentSidebar() {
               }}
               title={a.description}
             >
-              <div style={{ position: "relative", display: "flex" }}>
+<div style={{ position: "relative", display: "flex" }}>
                 <AgentAvatar id={a.id} accent={a.color} size={34} badge={a.icon} />
                 {isLive && (
                   <span
