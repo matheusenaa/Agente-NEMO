@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type {
   CalendarEvent, ChatMessage, FileNode, HistoryItem, IdeConfig, LiveStatus, LogEntry,
-  NotifItem, OpenFile, TaskItem, TermLine, ViewId,
+  NotifItem, OpenFile, TaskItem, TaskStatus, TermLine, ViewId,
 } from "@/types/idea";
 import { getAgent } from "@/data/agents";
 
@@ -100,7 +100,7 @@ interface IdeStore {
 
   // tasks
   tasks: TaskItem[];
-  addTask: (t: { title: string; priority?: TaskItem["priority"]; agentId?: string }) => string;
+  addTask: (t: { title: string; priority?: TaskItem["priority"]; agentId?: string; status?: TaskStatus }) => string;
   updateTask: (id: string, patch: Partial<TaskItem>) => void;
 
   // logs
@@ -230,7 +230,7 @@ export const useIdeStore = create<IdeStore>()(
       tasks: [],
       addTask: (t) => {
         const id = uid("task");
-        const task: TaskItem = { id, title: t.title, priority: t.priority ?? "normal", agentId: t.agentId ?? "nemo", status: "pending", createdAt: Date.now() };
+        const task: TaskItem = { id, title: t.title, priority: t.priority ?? "normal", agentId: t.agentId ?? "nemo", status: t.status ?? "pending", createdAt: Date.now() };
         set((s) => ({ tasks: [task, ...s.tasks] }));
         get().addLog({ tone: "info", text: `Nova tarefa: ${t.title}` });
         return id;

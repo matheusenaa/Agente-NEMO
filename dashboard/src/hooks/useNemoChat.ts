@@ -32,6 +32,11 @@ export function useNemoChat() {
       addLog({ tone: "agent", agentId, text: `${agent.name} iniciou: ${content.slice(0, 70)}` });
       addHistory({ kind: "chat", title: agent.name, agentId: agent.id, detail: content.slice(0, 120) });
 
+      const taskId =
+        content.trim().length > 10
+          ? addTask({ title: content.trim().slice(0, 60), priority: "normal", agentId, status: "running" })
+          : null;
+
       setLiveStatus({ agentId, busy: true, label: "🧠 Pensando...", phrase: "" });
       const thinkLabels = ["🧠 Pensando...", "🔎 Investigando...", "📂 Lendo arquivos...", "💻 Codificando..."];
       const im = window.setInterval(() => {
@@ -74,9 +79,8 @@ export function useNemoChat() {
       window.clearInterval(im);
       setLiveStatus({ busy: false, label: ok && !offline ? "🎯 Resolvido" : "😎 Tudo sob controle", phrase: "" });
 
-      if (content.trim().length > 10) {
-        const t = addTask({ title: content.trim().slice(0, 60), priority: "normal", agentId });
-        window.setTimeout(() => updateTask(t, ok ? { status: "done" } : { status: "error" }), ok ? 1000 : 300);
+      if (taskId) {
+        window.setTimeout(() => updateTask(taskId, ok ? { status: "done" } : { status: "error" }), ok ? 1000 : 300);
       }
     },
     [threads, addUserMessage, addHistory, addLog, insertAgentMessage, patchMessage, setLiveStatus, addTask, updateTask, notify, funnyStatus],
