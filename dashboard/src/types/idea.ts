@@ -20,6 +20,8 @@ export interface AgentCard {
   description?: string;
   priority?: "Baixa" | "Normal" | "Alta" | "Crítica";
   fallbacks?: string[];
+  /** Avatar SVG procedural (grafo identidade visual individual). Se ausente, usa icon emoji. */
+  avatar?: string;
 }
 
 export type MsgStatus = "sending" | "typing" | "done" | "error";
