@@ -3,6 +3,7 @@ import Phaser from 'phaser';
 import { OfficeScene } from './OfficeScene';
 import { useSquadStore } from '@/store/useSquadStore';
 import { useIdeStore } from '@/store/useIdeStore';
+import { AGENT_ROSTER } from '@/data/agents';
 
 interface PhaserGameProps {
   onAgentClick?: (agentId: string) => void;
@@ -81,11 +82,22 @@ export function PhaserGame({ onAgentClick }: PhaserGameProps) {
     const emitActivity = () => {
       const scene = getScene();
       if (!scene) return;
-      const live = useIdeStore.getState().liveStatus;
-      scene.events.emit("activity", {
-        agentId: live.agentId,
-        busy: live.busy,
-        label: live.label,
+      const state = useIdeStore.getState();
+      const live = state.liveStatus;
+      const busyAgents = new Set<string>();
+      if (live.busy) busyAgents.add(live.agentId);
+      state.tasks.forEach((t) => (t.status === "running" ? busyAgents.add(t.agentId) : undefined));
+      busyAgents.forEach((agentId) => {
+        scene.events.emit("activity", {
+          agentId,
+          busy: true,
+          label: live.agentId === agentId ? live.label : "em execução",
+        });
+      });
+      AGENT_ROSTER.forEach((a) => {
+        if (!busyAgents.has(a.id)) {
+          scene.events.emit("activity", { agentId: a.id, busy: false, label: "" });
+        }
       });
     };
 
@@ -97,6 +109,7 @@ export function PhaserGame({ onAgentClick }: PhaserGameProps) {
     const unsubSquad = useSquadStore.subscribe(emitSquad);
     const unsubIde = useIdeStore.subscribe((state, prev) => {
       if (state.liveStatus !== prev.liveStatus) emitActivity();
+      if (state.tasks !== prev.tasks) emitActivity();
       // cliques vêm da cena através do handler registrado abaixo
     });
 

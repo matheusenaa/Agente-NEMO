@@ -477,16 +477,16 @@ class TerminalRequest(BaseModel):
     timeout: int = 60
 
 
-class CalendarEventPayload(BaseModel):
+class EventRequest(BaseModel):
     id: Optional[str] = None
-    title: str
-    description: Optional[str] = None
-    date: str
-    startTime: str = "19:00"
-    duration: int = 60
-    category: str = "Tarefa"
+    title: str = ""
+    description: str = ""
+    date: str = ""
+    time: str = "09:00"
+    durationMin: int = 60
+    category: str = "outro"
     agentId: str = "nemo"
-    reminder: bool = False
+    remind: int = 15
     createdAt: Optional[int] = None
 
 
@@ -526,35 +526,8 @@ def agents() -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Calendário — eventos persistidos (JSON em DATA_DIR/calendar_events.json)
+# Calendário — eventos persistidos (JSON em _data/events.json)
 # ---------------------------------------------------------------------------
-DATA_DIR = ROOT / "data"
-if not DATA_DIR.is_dir():
-    try:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
-
-CALENDAR_FILE = DATA_DIR / "calendar_events.json"
-
-
-def _load_events() -> List[Dict[str, Any]]:
-    if CALENDAR_FILE.is_file():
-        try:
-            data = json.loads(CALENDAR_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, list):
-                return data
-        except Exception:
-            pass
-    return []
-
-
-def _save_events(events: List[Dict[str, Any]]) -> None:
-    try:
-        CALENDAR_FILE.write_text(json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
-
 
 def _gen_event_id() -> str:
     from uuid import uuid4
@@ -564,25 +537,25 @@ def _gen_event_id() -> str:
 @app.get("/api/nemo/events")
 def list_events() -> List[Dict[str, Any]]:
     events = _load_events()
-    events.sort(key=lambda e: (e.get("date", ""), e.get("startTime", "")))
+    events.sort(key=lambda e: (e.get("date", ""), e.get("time", "")))
     return events
 
 
 @app.post("/api/nemo/events")
-def create_event(payload: CalendarEventPayload) -> Dict[str, Any]:
-    now = int(datetime.now().timestamp() * 1000)
-    event: Dict[str, Any] = {
-        "id": payload.id or _gen_event_id(),
-        "title": payload.title.strip() or "Sem título",
-        "description": payload.description or None,
-        "date": payload.date,
-        "startTime": payload.startTime or "19:00",
-        "duration": payload.duration or 60,
-        "category": payload.category or "Tarefa",
-        "agentId": payload.agentId or "nemo",
-        "reminder": payload.reminder,
-        "createdAt": payload.createdAt or now,
-    }
+def create_event(req: EventRequest) -> Dict[str, Any]:
+    now = int(time.time() * 1000)
+    event: Dict[str, Any] = _normalize_event({
+        "id": req.id or _gen_event_id(),
+        "title": req.title.strip() or "Sem título",
+        "description": req.description,
+        "date": req.date,
+        "time": req.time or "09:00",
+        "durationMin": max(5, min(req.durationMin or 60, 1440)),
+        "category": req.category or "outro",
+        "agentId": req.agentId or "nemo",
+        "remind": int(req.remind or 0),
+        "createdAt": req.createdAt or now,
+    })
     events = _load_events()
     events = [e for e in events if e.get("id") != event["id"]]
     events.append(event)
@@ -591,21 +564,15 @@ def create_event(payload: CalendarEventPayload) -> Dict[str, Any]:
 
 
 @app.put("/api/nemo/events/{event_id}")
-def update_event(event_id: str, payload: CalendarEventPayload) -> Dict[str, Any]:
+def update_event(event_id: str, req: EventRequest) -> Dict[str, Any]:
     events = _load_events()
-    for e in events:
+    for i, e in enumerate(events):
         if e.get("id") == event_id:
-            e["title"] = payload.title.strip() or e.get("title", "Sem título")
-            e["description"] = payload.description if payload.description is not None else e.get("description")
-            e["date"] = payload.date or e.get("date")
-            e["startTime"] = payload.startTime or e.get("startTime", "19:00")
-            e["duration"] = payload.duration or e.get("duration", 60)
-            e["category"] = payload.category or e.get("category", "Tarefa")
-            e["agentId"] = payload.agentId or e.get("agentId", "nemo")
-            e["reminder"] = payload.reminder
+            merged = {**e, **{k: v for k, v in req.model_dump(exclude_unset=True).items() if v is not None and v != ""}}
+            events[i] = _normalize_event(merged)
             _save_events(events)
-            return e
-    raise HTTPException(status_code=404, detail="Evento não encontrado")
+            return events[i]
+    raise HTTPException(status_code=404, detail="Evento não encontrado.")
 
 
 @app.delete("/api/nemo/events/{event_id}")
@@ -613,9 +580,9 @@ def delete_event(event_id: str) -> Dict[str, Any]:
     events = _load_events()
     remaining = [e for e in events if e.get("id") != event_id]
     if len(remaining) == len(events):
-        raise HTTPException(status_code=404, detail="Evento não encontrado")
+        raise HTTPException(status_code=404, detail="Evento não encontrado.")
     _save_events(remaining)
-    return {"deleted": event_id}
+    return {"ok": True, "deleted": event_id}
 
 
 @app.post("/api/nemo/chat")
@@ -784,72 +751,6 @@ def models():
 @app.get("/api/nemo/snapshot")
 def snapshot() -> Dict[str, Any]:
     return _squads_snapshot()
-
-
-@app.get("/api/nemo/events")
-def list_events() -> List[Dict[str, Any]]:
-    """Lista os eventos do calendário da equipe (persistidos em _data/events.json)."""
-    return _load_events()
-
-
-class EventRequest(BaseModel):
-    id: Optional[str] = None
-    title: str = ""
-    description: str = ""
-    date: str = ""
-    time: str = "09:00"
-    durationMin: int = 60
-    category: str = "outro"
-    agentId: str = "nemo"
-    remind: int = 15
-    createdAt: Optional[int] = None
-
-
-@app.post("/api/nemo/events")
-def create_event(req: EventRequest) -> Dict[str, Any]:
-    events = _load_events()
-    new_event = _normalize_event({
-        "id": req.id or f"evt-{int(time.time() * 1000)}",
-        "title": req.title.strip() or "Sem título",
-        "description": req.description,
-        "date": req.date,
-        "time": req.time,
-        "durationMin": max(5, min(req.durationMin or 60, 1440)),
-        "category": req.category or "outro",
-        "agentId": req.agentId or "nemo",
-        "remind": int(req.remind or 0),
-        "createdAt": req.createdAt or int(time.time() * 1000),
-    })
-    events = [e for e in events if e.get("id") != new_event["id"]]
-    events.append(new_event)
-    _save_events(events)
-    return new_event
-
-
-@app.put("/api/nemo/events/{event_id}")
-def update_event(event_id: str, req: EventRequest) -> Dict[str, Any]:
-    events = _load_events()
-    updated: Optional[Dict[str, Any]] = None
-    for i, ev in enumerate(events):
-        if ev.get("id") == event_id:
-            merged = {**ev, **{k: v for k, v in req.model_dump(exclude_unset=True).items() if v is not None and v != ""}}
-            events[i] = _normalize_event(merged)
-            updated = events[i]
-            break
-    if updated is None:
-        raise HTTPException(status_code=404, detail="Evento não encontrado.")
-    _save_events(events)
-    return updated
-
-
-@app.delete("/api/nemo/events/{event_id}")
-def delete_event(event_id: str) -> Dict[str, Any]:
-    events = _load_events()
-    remaining = [e for e in events if e.get("id") != event_id]
-    if len(remaining) == len(events):
-        raise HTTPException(status_code=404, detail="Evento não encontrado.")
-    _save_events(remaining)
-    return {"ok": True, "deleted": event_id}
 
 
 @app.get("/api/nemo/auth")

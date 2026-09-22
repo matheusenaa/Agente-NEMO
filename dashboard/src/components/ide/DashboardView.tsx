@@ -21,6 +21,7 @@ export function DashboardView() {
 
   const openTasks = tasks.filter((t) => t.status === "pending").length;
   const runningTasks = tasks.filter((t) => t.status === "running").length;
+  const runningTaskItems = tasks.filter((t) => t.status === "running");
   const busyAgents = new Set<string>();
   if (liveStatus.busy) busyAgents.add(liveStatus.agentId);
   tasks.forEach((t) => (t.status === "running" ? busyAgents.add(t.agentId) : undefined));
@@ -159,7 +160,7 @@ export function DashboardView() {
           <div className="card-tt">­ƒñû Agentes</div>
           <div className="dash-agents">
             {AGENT_ROSTER.map((a) => {
-              const isBusy = liveStatus.agentId === a.id && liveStatus.busy;
+              const isBusy = busyAgents.has(a.id);
               return (
                 <button key={a.id} className="dash-agent clickable" onClick={() => chatWith(a.id)} title={`Conversar com ${a.name}`}>
                   <span className="dash-agent-ava">
@@ -188,10 +189,28 @@ export function DashboardView() {
                   <span style={{ color: "var(--text3)", fontSize: 11 }}>{m.detail}</span>
                 </button>
               );
+})}
+          </div>
+
+          <div className="card-tt">▶ Em execução</div>
+          <div className="dash-list">
+            {runningTaskItems.length === 0 && <div className="dash-empty">Nenhuma tarefa em execução agora.</div>}
+            {runningTaskItems.map((t) => {
+              const agent = getAgent(t.agentId);
+              return (
+                <button key={t.id} className="dash-row clickable" onClick={() => go("tasks")}>
+                  <AgentAvatar id={t.agentId} accent={agent.color} size={26} badge={agent.icon} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="dash-row-title">{t.title}</div>
+                    <div className="dash-row-sub">{agent.name} · em execução</div>
+                  </div>
+                  <span className="status-pill running">▶</span>
+                </button>
+              );
             })}
           </div>
 
-          <div className="card-tt">­ƒ¬Á Atividade recente</div>
+          <div className="card-tt">🪵 Atividade recente</div>
           <div className="dash-logs">
             {recentLogs.length === 0 && <div className="dash-empty">Sem atividade ainda.</div>}
             {recentLogs.map((l) => (

@@ -3,6 +3,7 @@ import { useIdeStore } from "@/store/useIdeStore";
 import { useSquadSocket } from "@/hooks/useSquadSocket";
 import { useEventReminders } from "@/hooks/useEventReminders";
 import { getTheme } from "@/data/themes";
+import { AGENT_ROSTER } from "@/data/agents";
 import { TopBar } from "./TopBar";
 import { AgentSidebar } from "./AgentSidebar";
 import { DashboardView } from "./DashboardView";
@@ -136,21 +137,23 @@ export function AppShell() {
 function RunningView() {
   const tasks = useIdeStore((s) => s.tasks);
   const running = tasks.filter((t) => t.status === "running");
-  const widthFor = (id: string) => {
-    // Largura estável por tarefa (hash simples -> 35..85%)
-    let h = 0;
-    for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-    return 35 + (h % 51) + "%";
-  };
+  const agent = (id: string) => getAgentName(id);
   return (
     <div>
       {running.length === 0 && <div style={{ color: "var(--text3)", fontSize: 12 }}>Nenhuma tarefa em execução agora.</div>}
       {running.map((t) => (
-        <div key={t.id} style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 12 }}>{t.title}</div>
-          <div className="bar"><i style={{ width: widthFor(t.id), animation: "pulse 2s infinite" }} /></div>
+        <div key={t.id} style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 8, height: 8, borderRadius: 9, background: "var(--warn)", display: "inline-block", animation: "pulse 1.2s infinite", flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12 }}>{t.title}</div>
+            <div style={{ fontSize: 11, color: "var(--text3)" }}>{agent(t.agentId)} · aguardando conclusão</div>
+          </div>
         </div>
       ))}
     </div>
   );
+}
+
+function getAgentName(id: string): string {
+  return AGENT_ROSTER.find((a) => a.id === id)?.name ?? "nemo";
 }

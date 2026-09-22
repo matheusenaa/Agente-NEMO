@@ -14,7 +14,12 @@ export function OfficeView() {
   const setView = useIdeStore((s) => s.setView);
   const setActiveAgent = useIdeStore((s) => s.setActiveAgent);
   const liveStatus = useIdeStore((s) => s.liveStatus);
+  const tasks = useIdeStore((s) => s.tasks);
   const [agentModal, setAgentModal] = useState(false);
+
+  const busyAgents = new Set<string>();
+  if (liveStatus.busy) busyAgents.add(liveStatus.agentId);
+  tasks.forEach((t) => (t.status === "running" ? busyAgents.add(t.agentId) : undefined));
 
   const handleAgentClick = (agentId: string) => {
     setActiveAgent(agentId);
@@ -48,7 +53,7 @@ export function OfficeView() {
           <PhaserGame onAgentClick={handleAgentClick} />
           <div className="office-dock">
             {AGENT_ROSTER.map((a) => {
-              const isBusy = liveStatus.agentId === a.id && liveStatus.busy;
+              const isBusy = busyAgents.has(a.id);
               return (
                 <button
                   key={a.id}
