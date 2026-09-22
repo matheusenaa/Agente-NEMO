@@ -27,7 +27,7 @@ function LogsView() {
       {logList.map((l) => (
         <div key={l.id} className="log-row" style={{ marginBottom: 3 }}>
           <span className="ts">{new Date(l.time).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
-          {l.agentId && <span style={{ width: 18, height: 18, borderRadius: 6, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "var(--chip-bg)", fontSize: 10 }}>{"🐟"}</span>}
+          {l.agentId && <span style={{ width: 18, height: 18, borderRadius: 6, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "var(--chip-bg)", fontSize: 10 }}>{getAgentIcon(l.agentId)}</span>}
           <span style={{ color: tone(l.tone) }}>{l.text}</span>
         </div>
       ))}
@@ -156,4 +156,8 @@ function RunningView() {
 
 function getAgentName(id: string): string {
   return AGENT_ROSTER.find((a) => a.id === id)?.name ?? "nemo";
+}
+
+function getAgentIcon(id: string): string {
+  return AGENT_ROSTER.find((a) => a.id === id)?.icon ?? "🐟";
 }
