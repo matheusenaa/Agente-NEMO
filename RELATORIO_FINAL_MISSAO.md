@@ -300,6 +300,8 @@ Criados:
 | Nova chave OpenRouter configurada no `.env` | ⚠️ Rede INEP bloqueia | `openrouter.ai` inacessível da máquina (DNS do subdomínio não resolve; TLS reset). `.env` criado/ignorado; validar de outra rede (hotspot/VPN/Render) |
 | Validação em "máquina limpa" (diretório alternativo) | ✅ PASS | ZIP `NEMO_IDE_Distribuivel.zip` (38.5 MB) extraído em `%TEMP%` e exe rodado: health `agents:12/squads:1/models:10`, files/squads OK, root 200. `api_key_configured:false` esperado (chave não vai no ZIP) |
 | Pacote distribuível `NEMO_IDE_Distribuivel.zip` | ✅ PASS | 38.5 MB com `NEMO_IDE/` + launchers (run_backend, start_nemo, start_nemo_dev, run_dashboard_dev) |
+| **Polish final pós-merge (round de consistência)** | ✅ PASS | Tarefas criadas via chat nascem `running` e viram done/error após a resposta (▶ Exec/dock rich ficam preenchidos); rosters com nome real dos `.agent.md` (Ana Análise, Rebeca Referência, Miguel Motion etc.); LogsView mostra o ícone do agente dono do log (antes fixo 🐟); `dashboard/dist`, exe e ZIP reconstruídos |
+| Rebuild final pós-polish | ✅ PASS | `dist/NEMO_IDE` + `NEMO_IDE_Distribuivel.zip` (38.47 MB) regenerados; máquina limpa: health `agents:12/squads:1/models:10`, files/squads OK, root 200 `hasApp:true`, `api_key_configured:false` (cwd no pacote; `.env` nunca entra no bundle) |
 
 **Git (Missão 3):**
 ```
@@ -309,6 +311,16 @@ ac6693d feat: agentes ocupados com tarefas em execucao + backend eventos dedupli
 4bf0060 merge: integrar versao do GitHub (aliases views pt + responsividade + validacao)
 ```
 > Ambos enviados para `origin/main` (público). Branch limpa e sincronizada.
+
+**Polish final (Missão 3, segundo lote):**
+```
+f81618e fix(ide): LogsView exibe o icone real do agente no log em vez de emoji fixo
+109864f fix(ide): nome dos agentes do roster alinha com os .agent.md (Ana Análise, Rebeca Referência, etc)
+60002ce feat(ide): tarefas criadas no chat ficam 'em execucao' durante o processamento
+d254b99 fix(ide): remove calendario duplicado morto (calendarEvents) e barra de progresso fake no ContextPanel
+f4d3cd2 fix(ide): ContextPanel troca barra de progresso fake por indicador honesto de conclusao
+```
+> Tudo enviado para `origin/main`; `dist/` e ZIP regenerados com o frontend final.
 
 ---
 
