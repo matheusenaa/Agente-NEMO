@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type {
   ChatMessage, FileNode, HistoryItem, IdeConfig, LiveStatus, LogEntry,
-  NotifItem, OpenFile, TaskItem, TermLine, ViewId,
+  NotifItem, OpenFile, TaskItem, TermLine, ViewId, CalendarEvent,
 } from "@/types/idea";
 import { getAgent } from "@/data/agents";
 
@@ -84,6 +84,12 @@ interface IdeStore {
   // history
   history: HistoryItem[];
   addHistory: (h: Omit<HistoryItem, "id" | "time">) => void;
+
+  // calendário
+  calendarEvents: CalendarEvent[];
+  addCalendarEvent: (e: Omit<CalendarEvent, "id" | "createdAt">) => void;
+  updateCalendarEvent: (id: string, patch: Partial<Omit<CalendarEvent, "id" | "createdAt">>) => void;
+  deleteCalendarEvent: (id: string) => void;
 }
 
 export const useIdeStore = create<IdeStore>()(
@@ -197,12 +203,26 @@ export const useIdeStore = create<IdeStore>()(
 
       history: [],
       addHistory: (h) => set((s) => ({ history: [{ ...h, id: uid("hist"), time: Date.now() }, ...s.history].slice(0, 300) })),
+
+      calendarEvents: [],
+      addCalendarEvent: (e) => {
+        const id = uid("evt");
+        const ev: CalendarEvent = { ...e, id, createdAt: Date.now() };
+        set((s) => ({ calendarEvents: [...s.calendarEvents, ev] }));
+        get().addLog({ tone: "ok", text: `Evento criado: ${e.title} (${e.date})` });
+        get().notify({ icon: "📅", text: `Evento criado: ${e.title}`, tone: "ok" });
+      },
+      updateCalendarEvent: (id, patch) =>
+        set((s) => ({ calendarEvents: s.calendarEvents.map((e) => (e.id === id ? { ...e, ...patch } : e)) })),
+      deleteCalendarEvent: (id) =>
+        set((s) => ({ calendarEvents: s.calendarEvents.filter((e) => e.id !== id) })),
     }),
     {
       name: "nemo-ide",
       partialize: (s) => ({
         config: s.config,
         activeAgentId: s.activeAgentId,
+        calendarEvents: s.calendarEvents,
       }),
     },
   ),

@@ -11,8 +11,10 @@ import { TerminalView } from "./TerminalView";
 import { TasksView } from "./TasksView";
 import { HistoryView } from "./HistoryView";
 import { SettingsView } from "./SettingsView";
+import { DashboardView } from "./DashboardView";
 import { ContextPanel } from "./ContextPanel";
 import { NotificationsLayer } from "./NotificationsLayer";
+import { CalendarView } from "./calendar/calendar";
 
 function LogsView() {
   const logs = useIdeStore((s) => s.logs);
@@ -63,6 +65,22 @@ export function AppShell() {
     if (fav) fav.href = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐟</text></svg>`;
   }, [config.theme, config.density, config.animations, config.fontSize]);
 
+  useEffect(() => {
+    const onVis = () => {
+      document.body.classList.toggle("no-anim", config.animations ? document.hidden : true);
+    };
+    onVis();
+    document.addEventListener("visibilitychange", onVis);
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onMotion = () => document.body.classList.toggle("no-anim", mq.matches || !config.animations);
+    onMotion();
+    mq.addEventListener?.("change", onMotion);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      mq.removeEventListener?.("change", onMotion);
+    };
+  }, [config.animations]);
+
   const viewMap: Record<string, ReactNode> = {
     chat: <ChatView />,
     workspace: <WorkspaceView />,
@@ -71,6 +89,10 @@ export function AppShell() {
     tasks: <TasksView />,
     history: <HistoryView />,
     settings: <SettingsView />,
+    dashboard: <DashboardView />,
+    agentes: <OfficeView />,
+    conversas: <ChatView />,
+    calendario: <CalendarView />,
   };
 
   return (

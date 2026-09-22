@@ -29,7 +29,7 @@ export function TopBar() {
 
   return (
     <header className="ide-top">
-      <div className="brand" onClick={() => setView("chat")} style={{ cursor: "pointer" }}>
+      <div className="brand" onClick={() => setView("dashboard")} style={{ cursor: "pointer" }} title="Dashboard">
         <div className="logo-nemo">🐟</div>
         <div>
           <div className="brand-name">NEMO</div>

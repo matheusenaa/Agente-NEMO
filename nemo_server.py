@@ -446,6 +446,19 @@ class TerminalRequest(BaseModel):
     timeout: int = 60
 
 
+class CalendarEventPayload(BaseModel):
+    id: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    date: str
+    startTime: str = "19:00"
+    duration: int = 60
+    category: str = "Tarefa"
+    agentId: str = "nemo"
+    reminder: bool = False
+    createdAt: Optional[int] = None
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -479,6 +492,99 @@ def context() -> Dict[str, Any]:
 @app.get("/api/nemo/agents")
 def agents() -> List[Dict[str, Any]]:
     return _discover_agents()
+
+
+# ---------------------------------------------------------------------------
+# Calendário — eventos persistidos (JSON em DATA_DIR/calendar_events.json)
+# ---------------------------------------------------------------------------
+DATA_DIR = ROOT / "data"
+if not DATA_DIR.is_dir():
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+CALENDAR_FILE = DATA_DIR / "calendar_events.json"
+
+
+def _load_events() -> List[Dict[str, Any]]:
+    if CALENDAR_FILE.is_file():
+        try:
+            data = json.loads(CALENDAR_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return data
+        except Exception:
+            pass
+    return []
+
+
+def _save_events(events: List[Dict[str, Any]]) -> None:
+    try:
+        CALENDAR_FILE.write_text(json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _gen_event_id() -> str:
+    from uuid import uuid4
+    return uuid4().hex[:9]
+
+
+@app.get("/api/nemo/events")
+def list_events() -> List[Dict[str, Any]]:
+    events = _load_events()
+    events.sort(key=lambda e: (e.get("date", ""), e.get("startTime", "")))
+    return events
+
+
+@app.post("/api/nemo/events")
+def create_event(payload: CalendarEventPayload) -> Dict[str, Any]:
+    now = int(datetime.now().timestamp() * 1000)
+    event: Dict[str, Any] = {
+        "id": payload.id or _gen_event_id(),
+        "title": payload.title.strip() or "Sem título",
+        "description": payload.description or None,
+        "date": payload.date,
+        "startTime": payload.startTime or "19:00",
+        "duration": payload.duration or 60,
+        "category": payload.category or "Tarefa",
+        "agentId": payload.agentId or "nemo",
+        "reminder": payload.reminder,
+        "createdAt": payload.createdAt or now,
+    }
+    events = _load_events()
+    events = [e for e in events if e.get("id") != event["id"]]
+    events.append(event)
+    _save_events(events)
+    return event
+
+
+@app.put("/api/nemo/events/{event_id}")
+def update_event(event_id: str, payload: CalendarEventPayload) -> Dict[str, Any]:
+    events = _load_events()
+    for e in events:
+        if e.get("id") == event_id:
+            e["title"] = payload.title.strip() or e.get("title", "Sem título")
+            e["description"] = payload.description if payload.description is not None else e.get("description")
+            e["date"] = payload.date or e.get("date")
+            e["startTime"] = payload.startTime or e.get("startTime", "19:00")
+            e["duration"] = payload.duration or e.get("duration", 60)
+            e["category"] = payload.category or e.get("category", "Tarefa")
+            e["agentId"] = payload.agentId or e.get("agentId", "nemo")
+            e["reminder"] = payload.reminder
+            _save_events(events)
+            return e
+    raise HTTPException(status_code=404, detail="Evento não encontrado")
+
+
+@app.delete("/api/nemo/events/{event_id}")
+def delete_event(event_id: str) -> Dict[str, Any]:
+    events = _load_events()
+    remaining = [e for e in events if e.get("id") != event_id]
+    if len(remaining) == len(events):
+        raise HTTPException(status_code=404, detail="Evento não encontrado")
+    _save_events(remaining)
+    return {"deleted": event_id}
 
 
 @app.post("/api/nemo/chat")

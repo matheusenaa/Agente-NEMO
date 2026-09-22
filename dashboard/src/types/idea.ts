@@ -2,7 +2,7 @@
 
 export type ThemeId = "ocean" | "vasco" | "cyber" | "midnight" | "graphite";
 export type LayoutId = "ide" | "chat" | "command" | "minimal";
-export type ViewId = "chat" | "workspace" | "office" | "terminal" | "tasks" | "history" | "settings";
+export type ViewId = "chat" | "workspace" | "office" | "terminal" | "tasks" | "history" | "settings" | "dashboard" | "agentes" | "conversas" | "calendario";
 export type Density = "compact" | "comfortable" | "spacious";
 
 export interface AgentCard {
@@ -23,6 +23,19 @@ export interface AgentCard {
 }
 
 export type MsgStatus = "sending" | "typing" | "done" | "error";
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  description?: string;
+  date: string;      // YYYY-MM-DD
+  startTime: string; // HH:MM
+  duration: number;  // minutos
+  category: string;
+  agentId: string;
+  reminder: boolean;
+  createdAt: number;
+}
 
 export interface ChatMessage {
   id: string;
