@@ -143,6 +143,8 @@ export function PhaserGame({ onAgentClick }: PhaserGameProps) {
         overflow: 'hidden',
         imageRendering: 'auto',
         cursor: 'default',
+        position: 'relative',
+        minHeight: 400,
       }}
     />
   );

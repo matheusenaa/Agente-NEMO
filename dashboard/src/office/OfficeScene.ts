@@ -117,6 +117,8 @@ export class OfficeScene extends Phaser.Scene {
     this.load.on('loaderror', (file: Phaser.Loader.File) => {
       console.error('Failed to load asset:', file.key, file.url);
     });
+
+    
   }
 
   create(): void {
@@ -168,6 +170,15 @@ export class OfficeScene extends Phaser.Scene {
   private renderScene(agents: Agent[]): void {
     agents = layoutAgents(agents);
 
+    if (agents.length === 0) {
+      this.clearScene();
+      this.roomBuilder.build(600, 400);
+      this.roomBuilder.buildBranding(600);
+      this.cameras.main.setZoom(1);
+      this.cameras.main.centerOn(300, 200);
+      return;
+    }
+
     let maxCol = 0, maxRow = 0;
     for (const agent of agents) {
       maxCol = Math.max(maxCol, agent.desk.col);
@@ -179,8 +190,7 @@ export class OfficeScene extends Phaser.Scene {
     const cellH = CELL_H + 80;
 
     const roomW = Math.max(maxCol * cellW + MARGIN * 2, 580);
-    const loungeSpace = CELL_H + 48;
-    const roomH = maxRow * cellH + MARGIN * 2 + WALL_H + loungeSpace;
+    const roomH = Math.max(maxRow * cellH + MARGIN * 2 + WALL_H + CELL_H * 2, 400);
 
     this.clearScene();
     this.roomBuilder.build(roomW, roomH);
@@ -203,11 +213,11 @@ export class OfficeScene extends Phaser.Scene {
       this.agentSprites.set(agent.id, agentSprite);
     }
 
-    // Ajusta câmera ao tamanho da sala
+    // Ajusta câmera ao tamanho da sala - garantir zoom mínimo de 0.5 para visibilidade
     const cam = this.cameras.main;
-    const scaleX = cam.width / (roomW + 32);
-    const scaleY = cam.height / (roomH + 32);
-    const zoom = Math.min(scaleX, scaleY, 2);
+    const configWidth = (this.game.config as any).width || 800;
+    const configHeight = (this.game.config as any).height || 600;
+    const zoom = Math.max(0.5, Math.min(configWidth / (roomW + 32), configHeight / (roomH + 32), 2));
     cam.setZoom(zoom);
     cam.centerOn(roomW / 2, roomH / 2);
   }

@@ -61,7 +61,6 @@ export function OfficeView() {
           minWidth: 180,
           boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
           zIndex: 100,
-          transition: "box-shadow .15s ease, transform .15s ease",
         }}
         onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-2px)"}
         onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
@@ -110,10 +109,6 @@ export function OfficeView() {
                   title={`Conversar com ${a.name}`}
                   style={{
                     transition: "transform .12s ease, box-shadow .12s ease",
-                    ":hover": {
-                      transform: "translateY(-2px)",
-                      boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
-                    },
                   }}
                 >
                   <span className="dock-ava">
