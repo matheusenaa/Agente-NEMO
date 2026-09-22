@@ -60,7 +60,12 @@ export function ContextPanel() {
               />
               <div style={{ flex: 1, minWidth: 0, fontSize: 12 }}>
                 <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.title}</div>
-                {t.status === "running" && <div className="bar"><i style={{ width: "46%" }} /></div>}
+                {t.status === "running" && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 5, color: "var(--warn)", fontSize: 10 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: 9, background: "var(--warn)", animation: "pulse 1.2s infinite", display: "inline-block" }} />
+                    aguardando conclusão
+                  </div>
+                )}
               </div>
               <span style={{ fontSize: 10, color: "var(--text3)" }}>{t.status}</span>
             </div>
