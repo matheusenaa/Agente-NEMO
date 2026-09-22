@@ -3,6 +3,7 @@ import { useIdeStore } from "@/store/useIdeStore";
 import { useNemoChat } from "@/hooks/useNemoChat";
 import { getAgent } from "@/data/agents";
 import { MessageBubble } from "./MessageBubble";
+import { AgentAvatar } from "./AgentAvatar";
 
 const SUGGESTIONS = [
   "Analise meus gastos e encontre duplicados",
@@ -50,11 +51,7 @@ export function ChatView() {
   return (
     <section className="view-area">
       <div className="chat-head">
-        <div
-          className="agent-ava"
-          style={{ background: agent.color, width: 30, height: 30, fontSize: 15 }}
-          dangerouslySetInnerHTML={{ __html: agent.icon }}
-        />
+        <AgentAvatar agent={agent} size={30} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 14 }}>Chat com {agent.name}</div>
           <div className="live-line">
