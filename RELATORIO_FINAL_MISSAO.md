@@ -295,9 +295,14 @@ Criados:
 | Backend: 2º bloco de endpoints `/api/nemo/events` removido | ✅ PASS | Um único schema `EventRequest` (linha ~480) e um único CRUD persistindo em `_data/events.json` |
 | Testes | ✅ PASS | `py_compile` 0, `test_client_unit.py` 5/5, `npm run build` exit 0 (84 módulos, 7.4s) |
 | Smoke test com servidor real (porta 8799) | ✅ PASS | health `agents:12/squads:1/models:10`; agents/context/models/snapshot/auth/files/root 200; chat offline `offline:true`; CRUD de eventos create→update→delete; terminal seguro/destrutivo/forçado; file save/read |
+| Rebuild do executável `dist/NEMO_IDE/` | ✅ PASS | PyInstaller 6.22.3 instalado via pip (pypi liberado); bundle 25.4 MB; health `agents:12/squads:1/models:10`; root 200; CRUD eventos; terminal `echo BUNDLE_OK`; agents/ 12 + squads + dashboard no bundle |
+| **Bug frozen novo: ROOT com short name** | ✅ PASS | `sys._MEIPASS` retorna caminho curto (`MATHEU~1.SIL`) → `_get_project_root()` agora aplica `.resolve()` para normalizar para `matheus.silva`; sem isso `/api/nemo/files` retornava 400 "Caminho fora do diretório" no bundle |
+| Nova chave OpenRouter configurada no `.env` | ⚠️ Rede INEP bloqueia | `openrouter.ai` inacessível da máquina (DNS do subdomínio não resolve; TLS reset). `.env` criado/ignorado; validar de outra rede (hotspot/VPN/Render) |
 
 **Git (Missão 3):**
 ```
+acbd224 fix(server): resolve() no ROOT frozen normaliza short names do _MEIPASS (Windows)
+fbf3e40 docs: registra missao 3 no relatorio final (merge GitHub, tarefas em execucao, backend dedup)
 ac6693d feat: agentes ocupados com tarefas em execucao + backend eventos deduplicado
 4bf0060 merge: integrar versao do GitHub (aliases views pt + responsividade + validacao)
 ```
