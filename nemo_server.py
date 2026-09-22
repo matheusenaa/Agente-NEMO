@@ -68,13 +68,15 @@ def _get_project_root() -> Path:
     para um diretório errado).
     """
     if getattr(sys, 'frozen', False):
-        base = Path(sys._MEIPASS)
+        # resolve() normaliza short names (ex.: MATHEU~1.SIL -> matheus.silva);
+        # sem isso a verificacao de containment do _safe_resolve falha no Windows.
+        base = Path(sys._MEIPASS).resolve()
         # Fallback robusto: se o pacote de dados não estiver em MEIPASS,
         # procura por agents/ nas proximidades (onedir em outras layouts).
         if not (base / "agents").is_dir():
             for cand in (base.parent, base.parent / "_MEIPASS", Path.cwd()):
                 if (cand / "agents").is_dir():
-                    base = cand
+                    base = cand.resolve()
                     break
         return base
     return Path(__file__).resolve().parent
