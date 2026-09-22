@@ -4,6 +4,7 @@
 # Sensitive / heavy binaries
 opencode.exe
 dist/
+dist-installer/
 build/
 NEMO_IDE_Distribuivel.zip
 *.exe

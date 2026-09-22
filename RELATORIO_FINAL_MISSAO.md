@@ -303,6 +303,7 @@ Criados:
 | **Polish final pós-merge (round de consistência)** | ✅ PASS | Tarefas criadas via chat nascem `running` e viram done/error após a resposta (▶ Exec/dock rich ficam preenchidos); rosters com nome real dos `.agent.md` (Ana Análise, Rebeca Referência, Miguel Motion etc.); LogsView mostra o ícone do agente dono do log (antes fixo 🐟); `dashboard/dist`, exe e ZIP reconstruídos |
 | Rebuild final pós-polish | ✅ PASS | `dist/NEMO_IDE` + `NEMO_IDE_Distribuivel.zip` (38.47 MB) regenerados; máquina limpa: health `agents:12/squads:1/models:10`, files/squads OK, root 200 `hasApp:true`, `api_key_configured:false` (cwd no pacote; `.env` nunca entra no bundle) |
 | **Chat offline gracioso com rede bloqueada** | ✅ PASS | Novo `_is_connection_error()`: com chave válida mas OpenRouter inacessível (firewall/timeout/DNS — ex.: rede INEP), o chat responde `ok:true offline:true` com mensagem amigável em PT-BR em vez de erro cru `APIConnectionError`. Testado ao vivo (8799) e via TestClient. Testes 5→7 |
+| **Instalador Inno Setup** | ✅ PASS | `NEMO_IDE_Setup_1.0.0.exe` (35.9 MB, SHA-256 `7372BAEC…`) compilado com `installer.iss` (Inno 6.7.3 via winget). Instalação por-usuário sem UAC (`PrivilegesRequired=lowest`, `{localappdata}`), PT-BR, atalho desktop/menu, desinstalador com limpeza de `_data`. Ícone NEMO gerado programaticamente (`assets/NEMO.ico`). Validado: install silencioso `exit code 0`, exe instalado serve health `12/1/10` + root 200 `hasApp:true` sem chave |
 
 **Git (Missão 3):**
 ```
@@ -328,6 +329,12 @@ f4d3cd2 fix(ide): ContextPanel troca barra de progresso fake por indicador hones
 481d118 feat(server): chat offline gracioso quando OpenRouter inacessivel (rede bloqueada)
 ```
 > `dist/` e ZIP regenerados com o backend final (testes 7/7 OK, bundle re-validado em máquina limpa).
+
+**Missão 3, quarto lote:**
+```
+(aguardando commit) feat: instalador Inno Setup (per-usuario, sem UAC) + icon NEMO
+```
+> `NEMO_IDE_Setup_1.0.0.exe` gerado em `dist-installer/` (ignorado no git); script `installer.iss` e `assets/NEMO.ico` versionados.
 
 ---
 
