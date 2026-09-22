@@ -37,10 +37,12 @@ export const DESK_KEYS = {
   blackCoding: 'desk_black_coding',
   blackCodingAlt: 'desk_black_coding_alt',
   whiteIdle: 'desk_white_idle',
-  whiteCoding: 'desk_white_coding',
+  whiteCoding: 'whiteCoding',
   whiteCodingAlt: 'desk_white_coding_alt',
   blackUp: 'desk_black_up',
   whiteUp: 'desk_white_up',
+  // Nova mesa de reunião (alongada, com estações de trabalho)
+  meetingRoom: 'desk_meeting_room',
 } as const;
 
 export const DESK_PATHS: Record<string, string> = {

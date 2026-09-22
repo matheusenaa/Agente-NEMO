@@ -47,6 +47,54 @@ export function OfficeView() {
         </button>
       </div>
 
+      <div
+        id="squad-task-summary"
+        style={{
+          position: "absolute",
+          top: 60,
+          right: 12,
+          background: "var(--bg1)",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          padding: "8px 12px",
+          fontSize: 11,
+          minWidth: 180,
+          boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+          zIndex: 100,
+          transition: "box-shadow .15s ease, transform .15s ease",
+        }}
+        onMouseEnter={(e) => e.currentTarget.style.transform = "translateY(-2px)"}
+        onMouseLeave={(e) => e.currentTarget.style.transform = "translateY(0)"}
+      >
+        <div style={{ fontWeight: 600, fontSize: 11, marginBottom: 6, color: "var(--text)" }}>
+          Tarefas em execução
+        </div>
+        {(() => {
+          const running = tasks.filter((t) => t.status === "running");
+          const bySquad = new Map<string, string[]>();
+          running.forEach((t) => {
+            const sid = t.agentId || "nemo";
+            if (!bySquad.has(sid)) bySquad.set(sid, []);
+            bySquad.get(sid)!.push(t.title);
+          });
+          if (bySquad.size === 0) return null;
+          return (
+            <div>
+              {Array.from(bySquad.entries()).map(([agentId, titles]) => {
+                const agent = AGENT_ROSTER.find((a) => a.id === agentId);
+                const name = agent ? agent.name : agentId;
+                return (
+                  <div key={agentId} style={{ marginBottom: 4, fontSize: 10 }}>
+                    <span style={{ color: "var(--accentText)", fontWeight: 600 }}>{name}:</span>
+                    <span style={{ color: "var(--text2)", fontSize: 10 }}>{titles.join(", ")}</span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+      </div>
+
       <div className="office-wrap">
         <SquadSelector />
         <div style={{ flex: 1, minWidth: 0, position: "relative", background: "var(--bg0)" }}>
@@ -60,6 +108,13 @@ export function OfficeView() {
                   className="dock-chip"
                   onClick={() => openChat(a.id)}
                   title={`Conversar com ${a.name}`}
+                  style={{
+                    transition: "transform .12s ease, box-shadow .12s ease",
+                    ":hover": {
+                      transform: "translateY(-2px)",
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+                    },
+                  }}
                 >
                   <span className="dock-ava">
                     <AgentAvatar id={a.id} accent={a.color} size={30} badge={a.icon} shape="round" />
