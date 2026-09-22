@@ -415,3 +415,13 @@ textarea.ev-in{resize:vertical;min-height:46px}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
 button{cursor:pointer}
 button:active{transform:translateY(0.5px)}
+
+/* ============ PERSONAGENS EM ESPERA (Sala dos Agentes) ============
+   Agentes descansando entre tarefas com animações sutis
+   ============ */
+.agent-rest-item{
+  transition:background .15s ease,transform .15s ease,border-color .15s ease}
+.agent-rest-item:hover{
+  background:var(--bg4);
+  transform:translateY(-1px)}
+.agent-rest-item:active{transform:translateY(0.5px)}

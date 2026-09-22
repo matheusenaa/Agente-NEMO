@@ -157,21 +157,63 @@ export function DashboardView() {
         </div>
 
         <div className="dash-col">
-          <div className="card-tt">­ƒñû Agentes</div>
+          <div className="card-tt">­ƒñû Sala dos Agentes</div>
           <div className="dash-agents">
-            {AGENT_ROSTER.map((a) => {
+{AGENT_ROSTER.map((a) => {
               const isBusy = busyAgents.has(a.id);
               return (
-                <button key={a.id} className="dash-agent clickable" onClick={() => chatWith(a.id)} title={`Conversar com ${a.name}`}>
-                  <span className="dash-agent-ava">
-                    <AgentAvatar id={a.id} accent={a.color} size={30} badge={a.icon} shape="round" />
-                    {isBusy && <span className="dock-busy" style={{ background: "var(--warn)", animation: "pulse 1.2s infinite" }} />}
+                <button
+                  key={a.id}
+                  className="agent-rest-item clickable"
+                  onClick={() => {
+                    setActiveAgent(a.id);
+                    setView("office");
+                  }}
+                  title={`Mudar ${a.name} para modo trabalho`}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    width: "100%",
+                    padding: "10px 12px",
+                    border: "1px solid var(--border)",
+                    borderRadius: 10,
+                    background: isBusy ? "var(--bg3)" : "var(--bg2)",
+                    color: isBusy ? "var(--text-primary)" : "var(--text-secondary)",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    fontSize: 13,
+                    fontFamily: "inherit",
+                    transition: "all 0.15s ease",
+                    marginBottom: 6,
+                  }}
+                >
+                  <AgentAvatar
+                    id={a.id}
+                    accent={a.color}
+                    size={34}
+                    badge={a.icon}
+                    shape="round"
+                    style={{ 
+                      width: 34, height: 34,
+                      flexShrink: 0,
+                      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.12)",
+                    }}
+                  />
+                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {a.name}
                   </span>
-                  <span className="dash-agent-n">{a.name}</span>
-                  <span className="dash-agent-s">{isBusy ? "ocupado" : "online"}</span>
+                  <span style={{ fontSize: 11, color: "var(--text3)" }}>
+                    {isBusy ? "em execução" : "descansando"}
+                  </span>
                 </button>
               );
             })}
+            {busyAgents.size === 0 && (
+              <div style={{ padding: "16px 12px", color: "var(--text3)", fontSize: 12 }}>
+                Todos os agentes descansando
+              </div>
+            )}
           </div>
 
           <div className="card-tt">­ƒÄ» Miss├Áes recentes</div>
