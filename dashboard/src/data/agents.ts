@@ -35,7 +35,7 @@ export const AGENT_ROSTER: AgentCard[] = [
   },
   {
     id: "analista",
-    name: "Análisys",
+    name: "Ana Análise",
     title: "Analista de Dados",
     category: "data",
     icon: "📊",
@@ -49,7 +49,7 @@ export const AGENT_ROSTER: AgentCard[] = [
   },
   {
     id: "pesquisador",
-    name: "Rebeca",
+    name: "Rebeca Referência",
     title: "Pesquisadora",
     category: "research",
     icon: "🔍",
@@ -63,7 +63,7 @@ export const AGENT_ROSTER: AgentCard[] = [
   },
   {
     id: "redator",
-    name: "Clara",
+    name: "Clara Copy",
     title: "Redatora",
     category: "writing",
     icon: "✍️",
@@ -77,7 +77,7 @@ export const AGENT_ROSTER: AgentCard[] = [
   },
   {
     id: "revisor",
-    name: "Vera",
+    name: "Vera Veredito",
     title: "Revisora de Qualidade",
     category: "review",
     icon: "✅",
@@ -91,7 +91,7 @@ export const AGENT_ROSTER: AgentCard[] = [
   },
   {
     id: "designer",
-    name: "Duda",
+    name: "Duda Design",
     title: "Designer",
     category: "design",
     icon: "🎨",
@@ -105,7 +105,7 @@ export const AGENT_ROSTER: AgentCard[] = [
   },
   {
     id: "criador-video",
-    name: "Miguel",
+    name: "Miguel Motion",
     title: "Criador de Vídeo",
     category: "video",
     icon: "🎬",
@@ -119,7 +119,7 @@ export const AGENT_ROSTER: AgentCard[] = [
   },
   {
     id: "estrategista",
-    name: "Igor",
+    name: "Igor Ideia",
     title: "Estrategista",
     category: "strategy",
     icon: "🎯",
@@ -133,7 +133,7 @@ export const AGENT_ROSTER: AgentCard[] = [
   },
   {
     id: "gestor-redes",
-    name: "Sofia",
+    name: "Sofia Social",
     title: "Gestora de Redes Sociais",
     category: "social",
     icon: "📱",
@@ -147,7 +147,7 @@ export const AGENT_ROSTER: AgentCard[] = [
   },
   {
     id: "editor-publicador",
-    name: "Paula",
+    name: "Paula Publicação",
     title: "Editora & Publicadora",
     category: "publishing",
     icon: "📤",
@@ -161,7 +161,7 @@ export const AGENT_ROSTER: AgentCard[] = [
   },
   {
     id: "seo",
-    name: "Otto",
+    name: "Otto Otimização",
     title: "Especialista em SEO",
     category: "seo",
     icon: "🔎",
