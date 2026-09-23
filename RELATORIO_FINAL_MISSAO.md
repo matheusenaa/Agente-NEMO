@@ -385,14 +385,44 @@ Alterados:
 
 ---
 
+### Missão 5 (2026-09-23) — frases estáveis (10 min) e exclusão do histórico
+
+> **Objetivo**: corrigir a frase do agente/NEMO que ficava trocando a cada re-render (usando `pickPhrase` aleatório a cada render em `ContextPanel` e `DashboardView`) — troca agora **somente a cada 10 minutos** com **um único timer** global — e adicionar **exclusão de histórico** com confirmação e persistência.
+
+| Tarefa | Status | Evidência |
+|--------|--------|-----------|
+| Diagnóstico das frases trocando constantemente | ✅ PASS | `ContextPanel.tsx:46` chamava `pickPhrase(FUNNY_PHRASES, "")` **em todo render**; qualquer mudança de store (log, tarefa, status) re-renderizava e trocava a frase. Mesmo problema em `DashboardView.tsx:125` ("Nenhum evento futuro. {aleatório}") |
+| Frase ambiente global com rotação de 10 min | ✅ PASS | Store agora mantém `ambientPhrase` + `ambientPhraseAt` e `ensureAmbientPhrase(force?)`, que só troca quando `now - ambientPhraseAt >= 10*60*1000`. Inicializada na criação do store |
+| **Um único timer** (sem múltiplos setInterval/leaks) | ✅ PASS | Timer único no `AppShell` (montado uma vez, não reinicia ao navegar): chama `ensureAmbientPhrase()` a cada 60s verificando o limite de 10 min; pula quando `document.hidden` |
+| Frases estáveis nos componentes | ✅ PASS | `ContextPanel` usa `ambientPhrase` do store; `DashboardView` fixa a frase de "nenhum evento futuro" por sessão (`useState` inicializador); rótulo engraçado do `useNemoChat` selecionado 1x no início da tarefa (não troca a cada 2.6s) |
+| Exclusão de histórico (registro único + total) | ✅ PASS | `deleteHistory(id)` + `clearHistory()` no store; `HistoryView` ganhou botão 🗑️ por linha e "🗑️ Excluir histórico"; modal de confirmação ("Excluir este registro?" / "Excluir todo o histórico?" com Cancelar/Excluir); feedback via toast ("Registro excluído do histórico." / "Histórico excluído com sucesso.") |
+| Persistência da exclusão | ✅ PASS | `history` adicionado ao `partialize` do store — a remoção persiste entre sessões (checado no E2E: estado persistido mantém chave `history`, len=0 após limpar) |
+| E2E no build de produção | ✅ PASS | Harness novo `nemo_verify2.mjs`: **15/15 PASS** — frase estável entre 4 navegações/re-renders (ex.: "Em terra de dados duplicados…" idêntica), frase do dashboard estável, modal individual e total abrem, Cancelar e Excluir funcionam, linhas 2→1→0, persistência intata, console sem erros |
+| Regressão de ambientes (missão 4 não quebrou) | ✅ PASS | `nemo_e2e.mjs` (com espera por cena ativa, corrigido de timing-fixo): Escritório lum=73.2, Reunião 105.8, Agentes 122.5 — 9/9 pintados, logout OK, sessão persistente OK, isolamento OK, fallback (12 cartões, 0 canvas) OK |
+| Build/type-check | ✅ PASS | `npm run build` OK em ~7.8s (aviso de chunk Phaser conhecido) |
+
+**Arquivos alterados (Missão 5):**
+```
+dashboard/src/store/useIdeStore.ts              # ambientPhrase + rotação 10min + deleteHistory/clearHistory + history no persist
+dashboard/src/components/ide/AppShell.tsx       # timer único de rotação da frase (60s → verifica 10min)
+dashboard/src/components/ide/ContextPanel.tsx   # usa ambientPhrase (não pickPhrase por render)
+dashboard/src/components/ide/DashboardView.tsx  # frase "nenhum evento futuro" estável por sessão
+dashboard/src/hooks/useNemoChat.ts              # frase engraçada fixada 1x por tarefa (sem troca a 2.6s)
+dashboard/src/components/ide/HistoryView.tsx    # 🗑️ por linha + excluir tudo + modal de confirmação
+RELATORIO_FINAL_MISSAO.md                       # este relatório (missão 5)
+```
+
+**Limite conhecido (Missão 5):** a frase ambiente troca a cada 10 min enquanto o app está aberto (média/minuto checa o limite) — no primeiro carregamento a frase é sorteada via `ensureAmbientPhrase(true)`. Rotação por temporização de estado (sem múltiplos timers), conforme exigido.
+
+---
+
 ## 12. Git (Commits Enviados)
 
 ```
-febe934 fix(ide): vite dev host 0.0.0.0 para escutar IPv4
-7e684ec docs: relatório final da missão de estabilização
-463de05 fix(ide): terminal, histórico, editor, syntax, avatares, Phaser, breadcrumbs, barra, notificações, snapshot
-5df1219 fix(server): squad.yaml plano no snapshot, encoding UTF-8, timeout OpenRouter
-3816b4a feat: add NEMO IDE executable launcher
+888c50b fix: corrigir renderizacao dos ambientes - CANVAS + debounce resize + cena por sala + fallback funcional
+66a2b49 feat: login com area privada por usuario e isolamento de dados no backend
+df3f66d feat: frase ambiente estavel (rotacao a cada 10 min com timer unico) e exclusao de historico com confirmacao
+8a08777 fix: padronizar portugues da interface (dashboards, agentes, textos) e atualizar relatorio
 ... (histórico anterior)
 ```
 
