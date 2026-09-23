@@ -1,14 +1,35 @@
 import { useState } from "react";
 import { SquadSelector } from "@/components/SquadSelector";
-import { PhaserGame } from "@/office/PhaserGame";
+import { PhaserGame, type RoomId } from "@/office/PhaserGame";
 import { StatusBar } from "@/components/StatusBar";
 import { AgentProfileModal } from "./AgentProfileModal";
 import { AgentAvatar } from "@/components/AgentAvatar";
+import { RoomFallback } from "./RoomFallback";
+import { RoomBoundary, webglAvailable } from "./RoomBoundary";
 import { AGENT_ROSTER } from "@/data/agents";
 import { useSquadStore } from "@/store/useSquadStore";
 import { useIdeStore } from "@/store/useIdeStore";
 
-export function OfficeView() {
+const ROOM_META: Record<RoomId, { title: string; hint: string }> = {
+  office: {
+    title: "🏢 Escritório da equipe",
+    hint: "👉 clique num agente para conversar",
+  },
+  reuniao: {
+    title: "🤝 Sala de Reunião",
+    hint: "planejamento e alinhamento — clique num agente para conversar",
+  },
+  agentes: {
+    title: "☕ Área de Descanso",
+    hint: "a equipe aguarda aqui — clique num agente para conversar",
+  },
+};
+
+interface OfficeViewProps {
+  roomId?: RoomId;
+}
+
+export function OfficeView({ roomId = "office" }: OfficeViewProps) {
   const selectedSquad = useSquadStore((s) => s.selectedSquad);
   const isConnected = useSquadStore((s) => s.isConnected);
   const setView = useIdeStore((s) => s.setView);
@@ -16,6 +37,9 @@ export function OfficeView() {
   const liveStatus = useIdeStore((s) => s.liveStatus);
   const tasks = useIdeStore((s) => s.tasks);
   const [agentModal, setAgentModal] = useState(false);
+  const [webglOk] = useState(webglAvailable);
+  const meta = ROOM_META[roomId];
+  const fallback = <RoomFallback title={meta.title} subtitle={meta.hint} />;
 
   const busyAgents = new Set<string>();
   if (liveStatus.busy) busyAgents.add(liveStatus.agentId);
@@ -34,14 +58,14 @@ export function OfficeView() {
   return (
     <section className="view-area" style={{ overflow: "hidden" }}>
       <div className="chat-head" style={{ gap: 8 }}>
-        <span style={{ fontWeight: 700 }}>🏢 Sala de reunião da equipe</span>
+        <span style={{ fontWeight: 700 }}>{meta.title}</span>
         <span style={{ color: "var(--text3)", fontSize: 12 }}>
           {isConnected ? "🔗 ao vivo (WebSocket)" : "⭘ demonstrativo — equipe NEMO"}
         </span>
         {selectedSquad && (
           <span style={{ color: "var(--accentText)", fontSize: 12 }}>squad: {selectedSquad}</span>
         )}
-        <span style={{ color: "var(--text3)", fontSize: 12 }}>👉 clique num agente para conversar</span>
+        <span style={{ color: "var(--text3)", fontSize: 12 }}>{meta.hint}</span>
         <button className="tool-btn" style={{ marginLeft: "auto" }} onClick={() => setView("chat")}>
           Voltar ao chat →
         </button>
@@ -97,7 +121,13 @@ export function OfficeView() {
       <div className="office-wrap">
         <SquadSelector />
         <div style={{ flex: 1, minWidth: 0, position: "relative", background: "var(--bg0)" }}>
-          <PhaserGame onAgentClick={handleAgentClick} />
+          {webglOk ? (
+            <RoomBoundary fallback={fallback}>
+              <PhaserGame roomId={roomId} onAgentClick={handleAgentClick} />
+            </RoomBoundary>
+          ) : (
+            fallback
+          )}
           <div className="office-dock">
             {AGENT_ROSTER.map((a) => {
               const isBusy = busyAgents.has(a.id);

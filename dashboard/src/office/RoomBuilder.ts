@@ -17,7 +17,7 @@ export class RoomBuilder {
   }
 
   /**
-   * Faixa de identidade da sala — "NEMO AI STUDIO" com cores do Vasco da Gama.
+   * Faixa de identidade da sala — "NEMO ESTÚDIO IA" com cores do Vasco da Gama.
    * Fica no centro da parede principal (faixa vertical superior).
    */
   buildBranding(roomW: number): void {
@@ -54,7 +54,7 @@ export class RoomBuilder {
     g.fillRect(crossX + 2, bannerY + 9, 18, 46);
 
     // Texto principal
-    s.add.text(bannerX + 12, bannerY, '⚓ NEMO AI STUDIO', {
+    s.add.text(bannerX + 12, bannerY, '⚓ NEMO ESTÚDIO IA', {
       fontFamily: '"Segoe UI", "Helvetica Neue", Arial, sans-serif',
       fontSize: '26px',
       fontStyle: 'bold',

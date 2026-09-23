@@ -21,7 +21,7 @@ const STATUS_LABELS_PT: Record<AgentStatus, string> = {
   idle: '🟢 Online',
   working: '🧠 Trabalhando...',
   done: '🎯 Pronto',
-  checkpoint: '🚦 Checkpoint',
+  checkpoint: '🚦 Ponto de checagem',
   delivering: '📤 Entregando...',
 };
 
@@ -33,10 +33,10 @@ interface BubbleState {
 
 export class AgentSprite {
   private scene: Phaser.Scene;
-  private deskTable: Phaser.GameObjects.Image;
+  private deskTable?: Phaser.GameObjects.Image;
   private deskShadow: Phaser.GameObjects.Graphics;
-  private desk: Phaser.GameObjects.Image;
-  private coffeeMug: Phaser.GameObjects.Image;
+  private desk?: Phaser.GameObjects.Image;
+  private coffeeMug?: Phaser.GameObjects.Image;
   private avatar: Phaser.GameObjects.Image;
   private avatarRing: Phaser.GameObjects.Graphics;
   private nameText: Phaser.GameObjects.Text;
@@ -55,6 +55,7 @@ export class AgentSprite {
   private avatarDisplayH: number = 0;
   private hoverZone: Phaser.GameObjects.Zone;
   private busy = false;
+  private labelOverrides: Partial<Record<AgentStatus, string>>;
 
   constructor(
     scene: Phaser.Scene,
@@ -64,11 +65,13 @@ export class AgentSprite {
     deskVariant: 'black' | 'white',
     agent: Agent,
     onClick?: (id: string) => void,
+    opts?: { noDesk?: boolean; labelOverrides?: Partial<Record<AgentStatus, string>> },
   ) {
     this.scene = scene;
     this.agent = agent;
     this.characterName = characterName;
     this.deskVariant = deskVariant;
+    this.labelOverrides = opts?.labelOverrides ?? {};
 
     // Avatar — positioned further behind the desk so head/torso is clearly visible
     const avatarKey = this.getAvatarKey(agent.status);
@@ -82,22 +85,24 @@ export class AgentSprite {
     this.avatarRing = scene.add.graphics();
     this.avatarRing.setDepth(y + 0.5);
 
-    // Desk table surface — renders IN FRONT of avatar (covers lower body)
-    this.deskTable = scene.add.image(x, y, FURNITURE_KEYS.deskWood)
-      .setOrigin(0.5, 0.5)
-      .setScale(1.3)
-      .setDepth(y + 1);
+    if (!opts?.noDesk) {
+      // Desk table surface — renders IN FRONT of avatar (covers lower body)
+      this.deskTable = scene.add.image(x, y, FURNITURE_KEYS.deskWood)
+        .setOrigin(0.5, 0.5)
+        .setScale(1.3)
+        .setDepth(y + 1);
 
-    // Monitor — screen-facing (_down orientation), sits on desk surface
-    const deskKey = this.getDeskKey(agent.status);
-    this.desk = scene.add.image(x, y - 30, deskKey)
-      .setOrigin(0.5, 0.5)
-      .setScale(1.3)
-      .setDepth(y + 2);  // On top of desk surface, screen visible to viewer
+      // Monitor — screen-facing (_down orientation), sits on desk surface
+      const deskKey = this.getDeskKey(agent.status);
+      this.desk = scene.add.image(x, y - 30, deskKey)
+        .setOrigin(0.5, 0.5)
+        .setScale(1.3)
+        .setDepth(y + 2);  // On top of desk surface, screen visible to viewer
 
-    // Coffee mug — right side of desk, away from monitor
-    this.coffeeMug = scene.add.image(x + 42, y + 8, 'furniture_coffee_mug')
-      .setOrigin(0.5, 1).setScale(1.4).setDepth(y + 3);
+      // Coffee mug — right side of desk, away from monitor
+      this.coffeeMug = scene.add.image(x + 42, y + 8, 'furniture_coffee_mug')
+        .setOrigin(0.5, 1).setScale(1.4).setDepth(y + 3);
+    }
 
     // Shadow (unused graphics object kept for destroy() compatibility)
     this.deskShadow = scene.add.graphics();
@@ -136,7 +141,7 @@ export class AgentSprite {
 
     // Status text — colored with outline
     const statusColor = this.getStatusHexColor(agent.status);
-    this.statusText = scene.add.text(x, labelY + 24, STATUS_LABELS_PT[agent.status] ?? STATUS_LABELS_PT.idle, {
+    this.statusText = scene.add.text(x, labelY + 24, this.labelFor(agent.status), {
       fontFamily: '"Segoe UI", "Helvetica Neue", Arial, sans-serif',
       fontSize: '13px',
       fontStyle: 'bold',
@@ -184,6 +189,10 @@ export class AgentSprite {
     this.iconChip.lineStyle(2, color, 1);
     this.iconChip.strokeRoundedRect(x - 16, y - 16, 32, 32, 9);
     this.iconChip.setDepth(y + 3);
+  }
+
+  private labelFor(status: AgentStatus): string {
+    return this.labelOverrides[status] ?? STATUS_LABELS_PT[status] ?? STATUS_LABELS_PT.idle;
   }
 
   // ------------------------------------------------------------------
@@ -367,7 +376,7 @@ export class AgentSprite {
       this.statusText.setText(label);
       this.statusText.setColor('#ffffff');
     } else if (this.agent) {
-      this.statusText.setText(STATUS_LABELS_PT[this.agent.status] ?? STATUS_LABELS_PT.idle);
+      this.statusText.setText(this.labelFor(this.agent.status));
       this.statusText.setColor(this.getStatusHexColor(this.agent.status));
     }
 
@@ -390,7 +399,7 @@ export class AgentSprite {
     if (this.agent.status === agent.status && this.agent.name === agent.name) return;
     this.agent = agent;
 
-    this.desk.setTexture(this.getDeskKey(agent.status));
+    this.desk?.setTexture(this.getDeskKey(agent.status));
     this.setAvatarFrame(this.getAvatarKey(agent.status));
 
     this.animTimer?.destroy();
@@ -398,7 +407,7 @@ export class AgentSprite {
 
     // Update status text and dot
     if (!this.busy) {
-      this.statusText.setText(STATUS_LABELS_PT[agent.status] ?? STATUS_LABELS_PT.idle);
+      this.statusText.setText(this.labelFor(agent.status));
       this.statusText.setColor(this.getStatusHexColor(agent.status));
     }
 
@@ -423,10 +432,10 @@ export class AgentSprite {
     this.animTween?.stop();
     this.bubblePeriod?.destroy();
     this.hideBubble();
-    this.deskTable.destroy();
+    this.deskTable?.destroy();
     this.deskShadow.destroy();
-    this.desk.destroy();
-    this.coffeeMug.destroy();
+    this.desk?.destroy();
+    this.coffeeMug?.destroy();
     this.avatar.destroy();
     this.avatarRing.destroy();
     this.nameText.destroy();

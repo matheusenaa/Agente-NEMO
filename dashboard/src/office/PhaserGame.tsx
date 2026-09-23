@@ -1,19 +1,33 @@
 import { useEffect, useRef } from 'react';
 import Phaser from 'phaser';
 import { OfficeScene } from './OfficeScene';
+import { MeetingScene } from './MeetingScene';
+import { RestScene } from './RestScene';
+import { BaseRoomScene } from './RoomSceneBase';
 import { useSquadStore } from '@/store/useSquadStore';
 import { useIdeStore } from '@/store/useIdeStore';
 import { AGENT_ROSTER } from '@/data/agents';
 
+export type RoomId = 'office' | 'reuniao' | 'agentes';
+
+const SCENE_BY_ROOM: Record<RoomId, string> = {
+  office: 'OfficeScene',
+  reuniao: 'MeetingScene',
+  agentes: 'RestScene',
+};
+
 interface PhaserGameProps {
+  roomId?: RoomId;
   onAgentClick?: (agentId: string) => void;
 }
 
-export function PhaserGame({ onAgentClick }: PhaserGameProps) {
+export function PhaserGame({ roomId = 'office', onAgentClick }: PhaserGameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const clickRef = useRef(onAgentClick);
+  const roomRef = useRef(roomId);
   clickRef.current = onAgentClick;
+  roomRef.current = roomId;
 
   // Create Phaser game on mount
   useEffect(() => {
@@ -23,47 +37,70 @@ export function PhaserGame({ onAgentClick }: PhaserGameProps) {
     const w = container.clientWidth || 800;
     const h = container.clientHeight || 600;
 
+    // Renderer 2D (Canvas): pintura previsível em qualquer placa/driver,
+    // eliminando a classe de falhas de "tela preta" do WebGL.
     const game = new Phaser.Game({
-      type: Phaser.AUTO,
+      type: Phaser.CANVAS,
       parent: container,
       width: w,
       height: h,
-      pixelArt: false,          // disabled globally so text renders smooth
-      antialias: false,          // keep pixel art look for sprites
-      roundPixels: true,         // snap sprites to whole pixels
+      pixelArt: false,
+      antialias: false,
+      roundPixels: true,
       backgroundColor: '#1a1420',
-      scene: [OfficeScene],
       scale: {
         mode: Phaser.Scale.NONE,
       },
     });
 
-    gameRef.current = game;
+    // Registra e inicia a cena correspondente à sala (o Phaser só auto-inicia
+    // a primeira cena da lista; aqui quem decide é o roomId).
+    game.scene.add('OfficeScene', OfficeScene);
+    game.scene.add('MeetingScene', MeetingScene);
+    game.scene.add('RestScene', RestScene);
+    game.scene.start(SCENE_BY_ROOM[roomRef.current] ?? 'OfficeScene');
 
-    // Resize canvas when container resizes
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        if (width > 0 && height > 0) {
-          game.scale.resize(width, height);
-        }
+    gameRef.current = game;
+    // Expor para debug/QA — útil para validar o pipeline visual
+    (window as unknown as { __nemoGame?: Phaser.Game }).__nemoGame = game;
+
+    // Redimensiona APENAS quando o layout acalmar (debounce 300ms) e só se
+    // o tamanho real mudou. Cada game.scale.resize() zera o buffer do canvas 2D
+    // durante a troca de frames; aplicá-lo a cada mudança transitória do layout
+    // causa o quadro "tela preta" intermitente no renderer Canvas.
+    let resizeTimer: number | undefined;
+    let lastW = 0;
+    let lastH = 0;
+    const applyResize = () => {
+      const rect = container.getBoundingClientRect();
+      const w = Math.round(rect.width);
+      const h = Math.round(rect.height);
+      if (w > 0 && h > 0 && (w !== lastW || h !== lastH)) {
+        lastW = w;
+        lastH = h;
+        game.scale.resize(w, h);
       }
+    };
+    const ro = new ResizeObserver(() => {
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(applyResize, 300);
     });
     ro.observe(container);
 
     return () => {
       ro.disconnect();
-      game.destroy(true);
+      if (gameRef.current === game) game.destroy(true);
       gameRef.current = null;
     };
   }, []);
 
   // Bridge React state → Phaser scene (emite estado inicial + mudanças)
   useEffect(() => {
-    const getScene = (): OfficeScene | null => {
+    const getScene = (): BaseRoomScene | null => {
       const game = gameRef.current;
       if (!game) return null;
-      const scene = game.scene.getScene("OfficeScene") as OfficeScene | null;
+      const key = SCENE_BY_ROOM[roomRef.current];
+      const scene = game.scene.getScene(key) as BaseRoomScene | null;
       if (!scene || !scene.scene.isActive()) return null;
       return scene;
     };
@@ -103,17 +140,14 @@ export function PhaserGame({ onAgentClick }: PhaserGameProps) {
 
     const onAgentClick = (id: string) => clickRef.current?.(id);
 
-    // Estado inicial (ex.: squad já ativo ao montar a cena)
     emitSquad();
 
     const unsubSquad = useSquadStore.subscribe(emitSquad);
     const unsubIde = useIdeStore.subscribe((state, prev) => {
       if (state.liveStatus !== prev.liveStatus) emitActivity();
       if (state.tasks !== prev.tasks) emitActivity();
-      // cliques vêm da cena através do handler registrado abaixo
     });
 
-    // Re-emite após a cena Phaser terminar de criar (estado inicial não chega antes)
     const reShot = setInterval(() => {
       const scene = getScene();
       if (scene) {
@@ -133,6 +167,7 @@ export function PhaserGame({ onAgentClick }: PhaserGameProps) {
       const scene = getScene();
       if (scene) scene.events.off('agentClick');
     };
+    // Intentional: apenas na montagem — a cena é trocada por remount do React
   }, []);
 
   return (

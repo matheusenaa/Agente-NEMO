@@ -34,3 +34,250 @@ body,
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
+
+/* ============================================================
+   NEMO — Login / autenticação (área pública)
+   ============================================================ */
+.auth-wrap {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 24px;
+  background: var(--bg0);
+}
+
+.auth-bg {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 18% 20%, rgba(0, 180, 255, 0.16), transparent 46%),
+    radial-gradient(circle at 82% 76%, rgba(0, 224, 198, 0.13), transparent 48%),
+    radial-gradient(circle at 75% 18%, rgba(255, 77, 109, 0.09), transparent 42%);
+  pointer-events: none;
+}
+
+.auth-card {
+  position: relative;
+  width: 100%;
+  max-width: 400px;
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 30px 30px 22px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: authIn 0.4s ease both;
+}
+
+@keyframes authIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.auth-brand { text-align: center; margin-bottom: 18px; }
+.auth-logo {
+  font-size: 42px;
+  line-height: 1;
+  filter: drop-shadow(0 4px 14px rgba(0, 180, 255, 0.35));
+}
+.auth-brandname {
+  font-size: 30px;
+  font-weight: 900;
+  letter-spacing: 6px;
+  background: var(--brand-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  margin-top: 4px;
+}
+.auth-brandsub { font-size: 11px; color: var(--text3); letter-spacing: 1px; margin-top: 2px; }
+
+.auth-agent-strip { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-bottom: 14px; }
+.auth-agent { transition: transform 0.15s ease; }
+.auth-agent:hover { transform: translateY(-3px); }
+
+.auth-sep { height: 1px; width: 100%; background: var(--border); margin-bottom: 20px; }
+
+.auth-form { width: 100%; display: flex; flex-direction: column; gap: 14px; }
+.auth-field { display: flex; flex-direction: column; gap: 5px; }
+.auth-label { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text2); }
+.auth-input {
+  width: 100%;
+  padding: 11px 13px;
+  border-radius: 10px;
+  border: 1px solid var(--border2);
+  background: var(--bg2);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.auth-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(0, 180, 255, 0.15);
+}
+
+.auth-error {
+  font-size: 12px;
+  color: var(--danger);
+  background: var(--chip-bg);
+  border: 1px solid rgba(232, 53, 92, 0.4);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.auth-submit {
+  margin-top: 4px;
+  padding: 13px;
+  border: none;
+  border-radius: 10px;
+  background: var(--brand-grad);
+  color: #04121c;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  letter-spacing: 0.4px;
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+.auth-submit:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.08); }
+.auth-submit:disabled { opacity: 0.55; cursor: default; }
+
+.auth-switch { margin-top: 18px; font-size: 13px; color: var(--text2); }
+.auth-link {
+  background: none;
+  border: none;
+  color: var(--accentText);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.auth-link:hover { color: var(--accent); }
+
+.auth-foot {
+  margin-top: 20px;
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text3);
+}
+.auth-server.ok { color: var(--success); }
+
+.auth-verify {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--bg0);
+}
+.auth-verify-text { font-size: 13px; color: var(--text2); }
+
+/* Painel estático de fallback (quando WebGL/Phaser não está disponível) */
+.room-fallback {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  min-height: 420px;
+  background:
+    radial-gradient(1100px 500px at 50% -80px, var(--accent) 0%, transparent 60%),
+    var(--bg0);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 24px 12px;
+  gap: 12px;
+  overflow: auto;
+}
+.room-fallback-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.room-fallback-icon {
+  font-size: 34px;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.3));
+}
+.room-fallback-title {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--text);
+}
+.room-fallback-subtitle {
+  font-size: 12px;
+  color: var(--text3);
+}
+.room-fallback-note {
+  font-size: 11px;
+  color: var(--accentText);
+  background: var(--chip-bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 14px;
+}
+.room-fallback-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 10px;
+  width: 100%;
+  max-width: 980px;
+  flex: 1;
+  align-content: center;
+}
+.room-fallback-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.room-fallback-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+.room-fallback-card.nemo {
+  border-color: var(--accent);
+  background: linear-gradient(160deg, var(--bg1), color-mix(in srgb, var(--accent) 14%, var(--bg1)));
+}
+.room-fallback-name {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text);
+}
+.room-fallback-role {
+  font-size: 10px;
+  color: var(--text3);
+  text-align: center;
+  line-height: 1.3;
+}
+.room-fallback-foot {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.room-fallback-badge {
+  font-size: 11px;
+  color: var(--text2);
+  background: var(--chip-bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 12px;
+}
