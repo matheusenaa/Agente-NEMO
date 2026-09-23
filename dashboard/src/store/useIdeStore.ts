@@ -5,6 +5,10 @@ import type {
   NotifItem, OpenFile, TaskItem, TaskStatus, TermLine, ViewId,
 } from "@/types/idea";
 import { getAgent } from "@/data/agents";
+import { FUNNY_PHRASES, pickPhrase } from "@/data/statusPhrases";
+
+const AMBIENT_INTERVAL_MS = 10 * 60 * 1000;
+const INITIAL_AMBIENT_PHRASE = pickPhrase(FUNNY_PHRASES, "");
 
 let counter = 0;
 const uid = (prefix = "id") => `${prefix}-${Date.now().toString(36)}-${++counter}`;
@@ -26,7 +30,7 @@ const NEMO_GREETING: ChatMessage = {
   role: "agent",
   agentId: "nemo",
   content:
-    "Bom dia! 👋 Sou o **NEMO**, coordenador da sua equipe de agentes.\n\nO que vamos resolver hoje?\n\n- `Analise meus gastos e encontre duplicados` (financeiro + dados)\n- `Monte um relatório do Vasco` (pesquisa + redação)\n- `Abra os arquivos do projeto` (workspace)\n\nÉ só conversar — eu delego, executo, valido e te trago o resultado. 🐟",
+    "Bom dia! 👋 Sou o **NEMO**, coordenador da sua equipe de agentes.\n\nO que vamos resolver hoje?\n\n- `Analise meus gastos e encontre duplicados` (financeiro + dados)\n- `Monte um relatório do Vasco` (pesquisa + redação)\n- `Abra os arquivos do projeto` (área de trabalho)\n\nÉ só conversar — eu delego, executo, valido e te trago o resultado. 🐟",
   time: Date.now(),
   status: "done",
 };
@@ -67,6 +71,11 @@ interface IdeStore {
   setActiveAgent: (id: string) => void;
   liveStatus: LiveStatus;
   setLiveStatus: (patch: Partial<LiveStatus>) => void;
+
+  // frase ambiente (rotaciona a cada 10 minutos)
+  ambientPhrase: string;
+  ambientPhraseAt: number;
+  ensureAmbientPhrase: (force?: boolean) => string;
 
   // chat por agente (threads independentes)
   threads: Record<string, ChatMessage[]>;
@@ -115,6 +124,8 @@ interface IdeStore {
   // history
   history: HistoryItem[];
   addHistory: (h: Omit<HistoryItem, "id" | "time">) => void;
+  deleteHistory: (id: string) => void;
+  clearHistory: () => void;
 }
 
 function withThread(get: () => IdeStore, agentId: string): ChatMessage[] {
@@ -145,6 +156,19 @@ export const useIdeStore = create<IdeStore>()(
       },
       liveStatus: { agentId: "nemo", label: "🟢 Online", phrase: "", busy: false },
       setLiveStatus: (patch) => set((s) => ({ liveStatus: { ...s.liveStatus, ...patch } })),
+
+      ambientPhrase: INITIAL_AMBIENT_PHRASE,
+      ambientPhraseAt: Date.now(),
+      ensureAmbientPhrase: (force) => {
+        const now = Date.now();
+        const s = get();
+        const stale = force || !s.ambientPhrase || now - s.ambientPhraseAt >= AMBIENT_INTERVAL_MS;
+        if (stale) {
+          set({ ambientPhrase: pickPhrase(FUNNY_PHRASES, s.ambientPhrase), ambientPhraseAt: now });
+          return get().ambientPhrase;
+        }
+        return s.ambientPhrase;
+      },
 
       threads: INITIAL_THREADS,
       addUserMessage: (agentId, content) => {
@@ -222,7 +246,7 @@ export const useIdeStore = create<IdeStore>()(
       setCurrentDir: (nodes) => set({ currentDirCache: nodes }),
 
       termLines: [
-        { id: uid("term"), tone: "info", text: "NEMO IDE terminal — bem-vindo! Rode comando seguros, ex: `dir` ou `python nemo_server.py`." },
+        { id: uid("term"), tone: "info", text: "NEMO IDE terminal — bem-vindo! Rode comandos seguros, ex: `dir` ou `python nemo_server.py`." },
       ],
       pushTerm: (line) => set((s) => ({ termLines: [...s.termLines.slice(-800), { ...line, id: uid("term") }] })),
       clearTerm: () => set({ termLines: [] }),
@@ -251,6 +275,14 @@ export const useIdeStore = create<IdeStore>()(
 
       history: [],
       addHistory: (h) => set((s) => ({ history: [{ ...h, id: uid("hist"), time: Date.now() }, ...s.history].slice(0, 300) })),
+      deleteHistory: (id) => {
+        set((s) => ({ history: s.history.filter((h) => h.id !== id) }));
+        get().addLog({ tone: "warn", text: "Registro de histórico excluído" });
+      },
+      clearHistory: () => {
+        set({ history: [] });
+        get().addLog({ tone: "warn", text: "Histórico completo excluído" });
+      },
     }),
     {
       name: "nemo-ide",
@@ -261,6 +293,7 @@ activeAgentId: s.activeAgentId,
         events: s.events,
         tasks: s.tasks,
         notifications: s.notifications,
+        history: s.history,
       }),
     },
   ),

@@ -1,11 +1,11 @@
 import { useIdeStore } from "@/store/useIdeStore";
 import { useSquadStore } from "@/store/useSquadStore";
 import { getAgent } from "@/data/agents";
-import { FUNNY_PHRASES, pickPhrase } from "@/data/statusPhrases";
 
 export function ContextPanel() {
   const rightOpen = useIdeStore((s) => s.rightOpen);
   const liveStatus = useIdeStore((s) => s.liveStatus);
+  const ambientPhrase = useIdeStore((s) => s.ambientPhrase);
   const logs = useIdeStore((s) => s.logs);
   const tasks = useIdeStore((s) => s.tasks);
   const openFiles = useIdeStore((s) => s.openFiles);
@@ -35,7 +35,7 @@ export function ContextPanel() {
           </div>
           <div className="kv">
             <strong>Squad</strong>
-            <span>{isConnected ? "🔗 conectado (WS)" : "⭘ offline (answering local)"}</span>
+            <span>{isConnected ? "🔗 conectado (WS)" : "⭘ offline (respondendo localmente)"}</span>
           </div>
           <div className="kv">
             <strong>Squads</strong>
@@ -43,7 +43,7 @@ export function ContextPanel() {
           </div>
           <div className="kv">
             <strong>Frases</strong>
-            <span style={{ fontStyle: "italic", color: "var(--text3)" }}>"{pickPhrase(FUNNY_PHRASES, "")}"</span>
+            <span style={{ fontStyle: "italic", color: "var(--text3)" }}>"{liveStatus.busy ? liveStatus.phrase || "Executando..." : ambientPhrase}"</span>
           </div>
         </div>
 
@@ -67,7 +67,7 @@ export function ContextPanel() {
                   </div>
                 )}
               </div>
-              <span style={{ fontSize: 10, color: "var(--text3)" }}>{t.status}</span>
+              <span style={{ fontSize: 10, color: "var(--text3)" }}>{t.status === "running" ? "em execução" : t.status === "done" ? "concluída" : t.status === "error" ? "erro" : "pendente"}</span>
             </div>
           ))}
         </div>

@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback } from "react";
 import { useIdeStore } from "@/store/useIdeStore";
 import { nemoApi } from "@/api/nemo";
 import { getAgent } from "@/data/agents";
@@ -6,7 +6,7 @@ import { FUNNY_PHRASES, pickPhrase } from "@/data/statusPhrases";
 
 const OFFLINE_RESPONSES: Record<string, string> = {
   nemo:
-    "Não consegui falar com o modelo (servidor NEMO offline). Rode `python nemo_server.py` e configure sua chave no `.env` para eu responder de verdade.\n\nEnquanto isso, registrei sua solicitação em **Tasks** e nos logs. 🐟",
+    "Não consegui falar com o modelo (servidor NEMO offline). Rode `python nemo_server.py` e configure sua chave no `.env` para eu responder de verdade.\n\nEnquanto isso, registrei sua solicitação em **Tarefas** e nos logs. 🐟",
   default:
     "Servidor de IA offline. Use `python nemo_server.py` para ativar o chat com os modelos OpenRouter.",
 };
@@ -23,7 +23,6 @@ export function useNemoChat() {
   const addHistory = useIdeStore((s) => s.addHistory);
   const notify = useIdeStore((s) => s.notify);
   const funnyStatus = useIdeStore((s) => s.config.funnyStatus);
-  const phraseRef = useRef<string>("");
 
   const send = useCallback(
     async (agentId: string, content: string) => {
@@ -37,15 +36,13 @@ export function useNemoChat() {
           ? addTask({ title: content.trim().slice(0, 60), priority: "normal", agentId, status: "running" })
           : null;
 
-      setLiveStatus({ agentId, busy: true, label: "🧠 Pensando...", phrase: "" });
+      setLiveStatus({ agentId, busy: true, label: "🧠 Pensando...", phrase: funnyStatus ? pickPhrase(FUNNY_PHRASES, "") : "" });
       const thinkLabels = ["🧠 Pensando...", "🔎 Investigando...", "📂 Lendo arquivos...", "💻 Codificando..."];
       const im = window.setInterval(() => {
         setLiveStatus({
           label: pickPhrase(thinkLabels, useIdeStore.getState().liveStatus.label),
-          phrase: funnyStatus ? pickPhrase(FUNNY_PHRASES, phraseRef.current) : "",
         });
       }, 2600);
-      phraseRef.current = "";
 
       const msgId = insertAgentMessage(agentId, { role: "agent", agentId, content: "" });
       let ok = false;

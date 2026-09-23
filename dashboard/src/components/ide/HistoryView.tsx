@@ -3,16 +3,24 @@ import { useIdeStore } from "@/store/useIdeStore";
 import { getAgent } from "@/data/agents";
 import { AgentAvatar } from "@/components/AgentAvatar";
 
+const KIND_LABEL: Record<string, string> = {
+  chat: "conversa", file: "arquivo", task: "tarefa", terminal: "terminal", config: "config",
+};
+
 const KIND_ICON: Record<string, string> = {
   chat: "💬", file: "📄", task: "✅", terminal: "🖥️", config: "⚙️",
 };
 
 export function HistoryView() {
   const history = useIdeStore((s) => s.history);
+  const deleteHistory = useIdeStore((s) => s.deleteHistory);
+  const clearHistory = useIdeStore((s) => s.clearHistory);
+  const notify = useIdeStore((s) => s.notify);
   const setView = useIdeStore((s) => s.setView);
   const setActiveAgent = useIdeStore((s) => s.setActiveAgent);
   const [q, setQ] = useState("");
   const [kind, setKind] = useState("all");
+  const [confirm, setConfirm] = useState<{ kind: "one" | "all"; id?: string } | null>(null);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -37,6 +45,22 @@ export function HistoryView() {
     }
   };
 
+  const doDeleteOne = () => {
+    if (confirm?.kind === "one" && confirm.id) {
+      deleteHistory(confirm.id);
+      notify({ icon: "🗑️", text: "Registro excluído do histórico.", tone: "ok" });
+    }
+  };
+  const doClearAll = () => {
+    clearHistory();
+    notify({ icon: "🗑️", text: "Histórico excluído com sucesso.", tone: "ok" });
+  };
+  const runConfirm = () => {
+    if (confirm?.kind === "one") doDeleteOne();
+    else doClearAll();
+    setConfirm(null);
+  };
+
   return (
     <section className="view-area">
       <div className="hist-wrap">
@@ -45,10 +69,15 @@ export function HistoryView() {
           <div className="seg">
             {["all", "chat", "file", "task", "terminal", "config"].map((k) => (
               <button key={k} className={`seg-btn ${kind === k ? "on" : ""}`} onClick={() => setKind(k)}>
-                {k === "all" ? "Todos" : KIND_ICON[k] + " " + k}
+                {k === "all" ? "Todos" : KIND_ICON[k] + " " + KIND_LABEL[k]}
               </button>
             ))}
           </div>
+          {history.length > 0 && (
+            <button className="tool-btn" style={{ marginLeft: "auto", color: "var(--danger)" }} onClick={() => setConfirm({ kind: "all" })}>
+              🗑️ Excluir histórico
+            </button>
+          )}
         </div>
         <input className="hist-search" placeholder="🔎 Buscar no histórico..." value={q} onChange={(e) => setQ(e.target.value)} />
 
@@ -72,10 +101,45 @@ export function HistoryView() {
               <span style={{ color: "var(--text3)", fontSize: 11 }}>
                 {new Date(h.time).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
               </span>
+              <button
+                className="tool-btn icon"
+                title="Excluir registro"
+                style={{ padding: "4px 6px", fontSize: 13, color: "var(--danger)" }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setConfirm({ kind: "one", id: h.id });
+                }}
+              >
+                🗑️
+              </button>
             </div>
           );
         })}
       </div>
+
+      {confirm && (
+        <div className="modal-mask" onClick={() => setConfirm(null)}>
+          <div className="modal-card" style={{ width: "min(420px,92vw)" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <span style={{ fontSize: 20 }}>🗑️</span>
+              <strong>{confirm.kind === "all" ? "Excluir todo o histórico?" : "Excluir este registro?"}</strong>
+            </div>
+            <div className="modal-body" style={{ fontSize: 13, color: "var(--text2)", lineHeight: 1.6 }}>
+              {confirm.kind === "all"
+                ? "Tem certeza que deseja excluir todo o histórico? Esta ação não pode ser desfeita."
+                : "Tem certeza que deseja excluir este registro? Esta ação não pode ser desfeita."}
+            </div>
+            <div className="modal-foot">
+              <button className="tool-btn" style={{ flex: 1 }} onClick={() => setConfirm(null)}>
+                Cancelar
+              </button>
+              <button className="tool-btn primary" style={{ flex: 1, background: "var(--danger)", borderColor: "var(--danger)" }} onClick={runConfirm}>
+                {confirm.kind === "all" ? "Excluir histórico" : "Excluir"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
