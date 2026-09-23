@@ -3,7 +3,9 @@ import { useIdeStore } from "@/store/useIdeStore";
 import { useSquadSocket } from "@/hooks/useSquadSocket";
 import { useEventReminders } from "@/hooks/useEventReminders";
 import { getTheme } from "@/data/themes";
-import { AGENT_ROSTER } from "@/data/agents";
+import { AGENT_ROSTER, getAgent } from "@/data/agents";
+import { useAuthStore } from "@/store/useAuthStore";
+import { LoginView } from "./LoginView";
 import { TopBar } from "./TopBar";
 import { AgentSidebar } from "./AgentSidebar";
 import { DashboardView } from "./DashboardView";
@@ -57,6 +59,35 @@ export function AppShell() {
   const config = useIdeStore((s) => s.config);
   const [bottomTab, setBottomTab] = useState<"terminal" | "logs" | "running">("terminal");
 
+  const authUser = useAuthStore((s) => s.user);
+  const checking = useAuthStore((s) => s.checking);
+  const restore = useAuthStore((s) => s.restore);
+
+  useEffect(() => {
+    restore();
+  }, [restore]);
+
+  useEffect(() => {
+    useIdeStore.getState().ensureAmbientPhrase(true);
+    const id = window.setInterval(() => {
+      if (!document.hidden) useIdeStore.getState().ensureAmbientPhrase();
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    if (!authUser) return;
+    try {
+      localStorage.setItem("nemo-user-name", authUser.name);
+    } catch { /* fallback */ }
+    const nemo = getAgent("nemo");
+    useIdeStore.getState().notify({
+      icon: nemo.icon,
+      text: `Bem-vindo(a), ${authUser.name.split(" ")[0]}! 🐟 NEMO está pronto para trabalhar.`,
+      tone: "ok",
+    });
+  }, [authUser]);
+
   useEffect(() => {
     const theme = getTheme(config.theme);
     document.body.dataset.theme = config.theme;
@@ -88,15 +119,29 @@ export function AppShell() {
     dashboard: <DashboardView />,
     chat: <ChatView />,
     workspace: <WorkspaceView />,
-    office: <OfficeView />,
+    office: <OfficeView key="office" roomId="office" />,
     calendar: <CalendarView />,
     terminal: <TerminalView />,
     tasks: <TasksView />,
     history: <HistoryView />,
     settings: <SettingsView />,
-    agentes: <OfficeView />,
+    agentes: <OfficeView key="agentes" roomId="agentes" />,
+    reuniao: <OfficeView key="reuniao" roomId="reuniao" />,
     calendario: <CalendarView />,
   };
+
+  if (checking) {
+    return (
+      <div className="auth-verify">
+        <div className="auth-logo">🐟</div>
+        <div className="auth-verify-text">Verificando sua sessão…</div>
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    return <LoginView />;
+  }
 
   return (
     <div className="ide-shell">
@@ -111,7 +156,7 @@ export function AppShell() {
               <div className="bottom-tabs">
                 {(["terminal", "logs", "running"] as const).map((t) => (
                   <button key={t} className={`bottom-tab ${bottomTab === t ? "on" : ""}`} onClick={() => setBottomTab(t)}>
-                    {t === "terminal" ? "⌨️ Terminal" : t === "logs" ? "🪵 Logs" : "▶ Exec"}
+                    {t === "terminal" ? "⌨️ Terminal" : t === "logs" ? "🪵 Logs" : "▶ Execução"}
                   </button>
                 ))}
                 <button className="bottom-tab" style={{ marginLeft: "auto", color: "var(--danger)" }} onClick={() => { if (bottomTab === "logs") bottomClear(); useIdeStore.getState().toggleBottom(false); }}>

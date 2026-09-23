@@ -85,13 +85,14 @@ ROOT = _get_project_root()
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from openrouter_client import OpenRouterClient, CompletionResult
 from models_config import OPENROUTER_MODELS, get_model_by_id, get_all_models
+from auth import AuthError, AuthStore, make_auth_store
 
 # ---------------------------------------------------------------------------
 # Constantes e helpers
@@ -106,6 +107,8 @@ SKILLS_DIR = ROOT / "skills"
 DASHBOARD_DIST = ROOT / "dashboard" / "dist"
 DATA_DIR = ROOT / "_data"
 EVENTS_FILE = DATA_DIR / "events.json"
+
+AUTH_STORE: AuthStore = make_auth_store(ROOT)
 
 DEFAULT_HOST = os.getenv("HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.getenv("PORT", "8798"))
@@ -337,21 +340,31 @@ def _run_command(command: str, force: bool = False, timeout: int = 60) -> Dict[s
         }
 
 
-def _load_events() -> List[Dict[str, Any]]:
-    """Carrega os eventos do calendário a partir do arquivo local (events.json)."""
-    if not EVENTS_FILE.is_file():
+def _events_file_for(user_id: str) -> Path:
+    """Arquivo de eventos da área privada do usuário (isolamento por usuário)."""
+    return AUTH_STORE.events_file(user_id)
+
+
+def _load_events(file: Optional[Path] = None) -> List[Dict[str, Any]]:
+    """Carrega os eventos do calendário a partir do arquivo local (events.json).
+
+    Por padrão usa o arquivo do usuário autenticado (isolamento de dados).
+    """
+    path = file or EVENTS_FILE
+    if not path.is_file():
         return []
     try:
-        data = json.loads(EVENTS_FILE.read_text(encoding="utf-8", errors="replace"))
+        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
         return data if isinstance(data, list) else []
     except Exception:
         return []
 
 
-def _save_events(events: List[Dict[str, Any]]) -> None:
+def _save_events(events: List[Dict[str, Any]], file: Optional[Path] = None) -> None:
+    path = file or EVENTS_FILE
     try:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        EVENTS_FILE.write_text(json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as exc:  # pragma: no cover
         raise HTTPException(status_code=500, detail=f"Não foi possível persistir eventos: {exc}")
 
@@ -497,7 +510,7 @@ class EventRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/nemo/health")
-def health() -> Dict[str, Any]:
+def health(request: Request) -> Dict[str, Any]:
     c = get_client()
     return {
         "project": PROJECT_NAME,
@@ -507,7 +520,80 @@ def health() -> Dict[str, Any]:
         "models": len(OPENROUTER_MODELS),
         "agents": len(_discover_agents()),
         "squads": len([d for d in SQUADS_DIR.iterdir() if d.is_dir() and not d.name.startswith((".", "_"))]) if SQUADS_DIR.is_dir() else 0,
+        "squad_ws": False,
+        "auth": True,
+        "authenticated": bool(_current_user(request)),
     }
+
+
+def _current_user(request: "Request") -> Optional[Dict[str, Any]]:
+    """Resolve o usuário autenticado a partir do header Authorization: Bearer <token>."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.lower().startswith("bearer "):
+        return None
+    token = auth[7:].strip()
+    return AUTH_STORE.resolve_token(token) if token else None
+
+
+def _require_user(request: "Request") -> Dict[str, Any]:
+    user = _current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Autenticação necessária. Faça login.")
+    return user
+
+
+# ---------------------------------------------------------------------------
+# Autenticação / multiusuário
+# ---------------------------------------------------------------------------
+
+class LoginRequest(BaseModel):
+    email: str = ""
+    password: str = ""
+
+
+class RegisterRequest(BaseModel):
+    name: str = ""
+    email: str = ""
+    password: str = ""
+
+
+@app.post("/api/auth/register")
+def register(req: RegisterRequest) -> Dict[str, Any]:
+    try:
+        user, token = AUTH_STORE.register(req.name, req.email, req.password)
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message)
+    return {"ok": True, "user": user, "token": token}
+
+
+@app.post("/api/auth/login")
+def login(req: LoginRequest) -> Dict[str, Any]:
+    try:
+        user, token = AUTH_STORE.login(req.email, req.password)
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message)
+    return {"ok": True, "user": user, "token": token}
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request) -> Dict[str, Any]:
+    auth = request.headers.get("Authorization", "")
+    if auth.lower().startswith("bearer "):
+        AUTH_STORE.revoke_token(auth[7:].strip())
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def me(request: Request) -> Dict[str, Any]:
+    user = _current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sessão inválida ou expirada.")
+    return {"ok": True, "user": user}
+
+
+# ---------------------------------------------------------------------------
+# Calendário — eventos persistidos por usuário (JSON em _data/users/<id>/events.json)
+# ---------------------------------------------------------------------------
 
 
 @app.get("/api/nemo/context")
@@ -537,14 +623,16 @@ def _gen_event_id() -> str:
 
 
 @app.get("/api/nemo/events")
-def list_events() -> List[Dict[str, Any]]:
-    events = _load_events()
+def list_events(request: Request) -> List[Dict[str, Any]]:
+    user = _require_user(request)
+    events = _load_events(_events_file_for(user["id"]))
     events.sort(key=lambda e: (e.get("date", ""), e.get("time", "")))
     return events
 
 
 @app.post("/api/nemo/events")
-def create_event(req: EventRequest) -> Dict[str, Any]:
+def create_event(req: EventRequest, request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
     now = int(time.time() * 1000)
     event: Dict[str, Any] = _normalize_event({
         "id": req.id or _gen_event_id(),
@@ -558,32 +646,37 @@ def create_event(req: EventRequest) -> Dict[str, Any]:
         "remind": int(req.remind or 0),
         "createdAt": req.createdAt or now,
     })
-    events = _load_events()
+    file = _events_file_for(user["id"])
+    events = _load_events(file)
     events = [e for e in events if e.get("id") != event["id"]]
     events.append(event)
-    _save_events(events)
+    _save_events(events, file)
     return event
 
 
 @app.put("/api/nemo/events/{event_id}")
-def update_event(event_id: str, req: EventRequest) -> Dict[str, Any]:
-    events = _load_events()
+def update_event(event_id: str, req: EventRequest, request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
+    file = _events_file_for(user["id"])
+    events = _load_events(file)
     for i, e in enumerate(events):
         if e.get("id") == event_id:
             merged = {**e, **{k: v for k, v in req.model_dump(exclude_unset=True).items() if v is not None and v != ""}}
             events[i] = _normalize_event(merged)
-            _save_events(events)
+            _save_events(events, file)
             return events[i]
     raise HTTPException(status_code=404, detail="Evento não encontrado.")
 
 
 @app.delete("/api/nemo/events/{event_id}")
-def delete_event(event_id: str) -> Dict[str, Any]:
-    events = _load_events()
+def delete_event(event_id: str, request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
+    file = _events_file_for(user["id"])
+    events = _load_events(file)
     remaining = [e for e in events if e.get("id") != event_id]
     if len(remaining) == len(events):
         raise HTTPException(status_code=404, detail="Evento não encontrado.")
-    _save_events(remaining)
+    _save_events(remaining, file)
     return {"ok": True, "deleted": event_id}
 
 

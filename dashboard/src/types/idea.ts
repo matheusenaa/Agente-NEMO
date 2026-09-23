@@ -2,7 +2,7 @@
 
 export type ThemeId = "ocean" | "vasco" | "cyber" | "midnight" | "graphite";
 export type LayoutId = "ide" | "chat" | "command" | "minimal";
-export type ViewId = "chat" | "workspace" | "office" | "terminal" | "tasks" | "history" | "settings" | "dashboard" | "calendar" | "agentes" | "conversas" | "calendario";
+export type ViewId = "chat" | "workspace" | "office" | "reuniao" | "terminal" | "tasks" | "history" | "settings" | "dashboard" | "calendar" | "agentes" | "conversas" | "calendario";
 export type Density = "compact" | "comfortable" | "spacious";
 
 export interface AgentCard {

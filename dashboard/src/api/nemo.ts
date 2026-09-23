@@ -2,9 +2,24 @@ import type { CalendarEvent, FileNode, OpenFile } from "@/types/idea";
 
 const BASE = "/api/nemo";
 
+function getToken(): string {
+  try {
+    const raw = localStorage.getItem("nemo-auth");
+    if (!raw) return "";
+    const parsed = JSON.parse(raw);
+    return parsed?.state?.token ?? parsed?.token ?? "";
+  } catch {
+    return "";
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getToken();
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     ...init,
   });
   if (!res.ok) {

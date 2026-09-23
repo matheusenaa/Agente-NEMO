@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useIdeStore } from "@/store/useIdeStore";
+import { useAuthStore } from "@/store/useAuthStore";
 import { VIEWS } from "@/data/agents";
 import type { ViewId } from "@/types/idea";
 
@@ -24,16 +25,18 @@ export function TopBar() {
   const notifications = useIdeStore((s) => s.notifications);
   const dismissNotif = useIdeStore((s) => s.dismissNotif);
   const tasks = useIdeStore((s) => s.tasks);
+  const authUser = useAuthStore((s) => s.user);
+  const logout = useAuthStore((s) => s.logout);
   const [notifOpen, setNotifOpen] = useState(false);
   const pendingTasks = tasks.filter((t) => t.status === "pending").length;
 
   return (
     <header className="ide-top">
-      <div className="brand" onClick={() => setView("dashboard")} style={{ cursor: "pointer" }} title="Dashboard">
+      <div className="brand" onClick={() => setView("dashboard")} style={{ cursor: "pointer" }} title="Painel">
         <div className="logo-nemo">🐟</div>
         <div>
           <div className="brand-name">NEMO</div>
-          <div className="brand-sub">IDE · AI Agents</div>
+          <div className="brand-sub">IDE · Agentes de IA</div>
         </div>
       </div>
 
@@ -82,10 +85,18 @@ export function TopBar() {
         <button className="icon-btn" title="Configurações" onClick={() => setView("settings")}>
           ⚙️
         </button>
-        <div className="user-pill">
-          <div className="ua">{getUserName().slice(0, 1).toUpperCase()}</div>
-          <span>{getUserName()}</span>
+        <div className="user-pill" title={authUser ? `${authUser.email} · sair` : undefined}>
+          <div className="ua">{(authUser?.name ?? getUserName()).slice(0, 1).toUpperCase()}</div>
+          <span>{authUser?.name ?? getUserName()}</span>
         </div>
+        <button
+          className="icon-btn"
+          title="Sair (encerrar sessão)"
+          onClick={() => logout()}
+          style={{ color: "var(--danger)" }}
+        >
+          ⏻
+        </button>
       </div>
     </header>
   );

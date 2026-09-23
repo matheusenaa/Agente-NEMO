@@ -148,7 +148,26 @@ export function useSquadSocket() {
       };
     }
 
-    connect();
+    // Descobre se o servidor oferece o WebSocket de squads. Em produção o
+    // backend serve `squad_ws:false` — nesse caso pulamos o WS direto,
+    // evitando o erro de handshake (HTTP 200) registrado no console.
+    fetch("/api/nemo/health", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((h) => {
+        if (disposed) return;
+        if (h?.squad_ws === true) {
+          connect();
+        } else {
+          pollingMode = true;
+          setConnected(false);
+          startPolling();
+        }
+      })
+      .catch(() => {
+        // Sem resposta do health (ex.: dev), tenta o WS normalmente.
+        if (!disposed) connect();
+      });
+
     // Poll imediatamente: em produção não há WS de squads e este primeiro
     // poll popula o snapshot (OfficeView/sidebar) sem esperar falhas do WS.
     startPolling();
