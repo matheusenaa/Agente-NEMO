@@ -13,7 +13,7 @@ export const AGENT_ROSTER: AgentCard[] = [
     icon: "🐟",
     color: "var(--vasco)",
     gradient: "linear-gradient(135deg,#10131b,#1b2029)",
-    role: "Orquestra a equipe, finanzas, administração, projetos, SAS, Python, Power BI, pesquisa e Vasco. Sempre direto, proativo e nunca para na primeira dificuldade.",
+    role: "Orquestra a equipe, finanças, administração, projetos, SAS, Python, Power BI, pesquisa e Vasco. Sempre direto, proativo e nunca para na primeira dificuldade.",
     description: "Coordenador da equipe e seu assistente pessoal. Delega tarefas aos demais agentes e consolida resultados.",
     priority: "Crítica",
     defaultModel: "openai/gpt-4o",
@@ -112,7 +112,7 @@ export const AGENT_ROSTER: AgentCard[] = [
     color: "#c084fc",
     gradient: "linear-gradient(135deg,#241342,#331a56)",
     role: "Produz roteiros de YouTube long-form e Shorts otimizados para CTR, retenção e replay.",
-    description: "Roteirista de vídeo YouTube long-form e Shorts com ganchos, scr e retenção.",
+    description: "Roteirista de vídeo YouTube long-form e Shorts com ganchos, CTR e retenção.",
     priority: "Normal",
     defaultModel: "openai/gpt-4o-mini",
     fallbacks: ["anthropic/claude-3.5-sonnet"],
@@ -192,20 +192,21 @@ export const PRIORITY_ICON: Record<string, { icon: string; label: string }> = {
 export const LAYOUTS: { id: string; label: string; desc: string }[] = [
   { id: "ide", label: "IDE Profissional", desc: "Editor central, chat lateral, terminal embutido, agentes à esquerda." },
   { id: "chat", label: "Chat Central", desc: "Conversa como foco, contexto à direita, agente à esquerda." },
-  { id: "command", label: "Command Center", desc: "Cartões de agentes e tarefas com progresso em tempo real." },
-  { id: "minimal", label: "AI Workspace", desc: "Minimalista: balão flutuante e ferramentas sob demanda." },
+  { id: "command", label: "Centro de Comando", desc: "Cartões de agentes e tarefas com progresso em tempo real." },
+  { id: "minimal", label: "Espaço de IA", desc: "Minimalista: balão flutuante e ferramentas sob demanda." },
 ];
 
 export const VIEWS: { id: string; icon: string; label: string }[] = [
-  { id: "dashboard", icon: "📊", label: "Dashboard" },
+  { id: "dashboard", icon: "📊", label: "Painel" },
   { id: "agentes", icon: "🐟", label: "Agentes" },
   { id: "office", icon: "🏢", label: "Escritório" },
+  { id: "reuniao", icon: "🤝", label: "Reunião" },
   { id: "conversas", icon: "💬", label: "Conversas" },
   { id: "calendario", icon: "📅", label: "Calendário" },
   { id: "tasks", icon: "✅", label: "Tarefas" },
   { id: "settings", icon: "⚙️", label: "Configurações" },
   { id: "chat", icon: "💬", label: "Chat" },
-  { id: "workspace", icon: "📁", label: "Workspace" },
+  { id: "workspace", icon: "📁", label: "Área de Trabalho" },
   { id: "terminal", icon: "⌨️", label: "Terminal" },
   { id: "history", icon: "🕘", label: "Histórico" },
 ];

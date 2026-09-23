@@ -338,6 +338,53 @@ f4d3cd2 fix(ide): ContextPanel troca barra de progresso fake por indicador hones
 
 ---
 
+### Missão 4 (2026-09-23) — múltiplos usuários, salas e fim definitivo da "tela preta"
+
+> **Objetivo**: eliminar a classe inteira de "tela preta" (nunca mostrar tela preta — fallback garantido), login + área privada por usuário com isolamento de dados, 3 ambientes distintos (Escritório / Reunião / Copinho-Sala dos Agentes) e português correto, com validação por evidência de pixels (não screenshots na tela).
+
+| Tarefa | Status | Evidência |
+|--------|--------|-----------|
+| Diagnóstico com Playwright baseado em pixels | ✅ PASS | Canal alfa/transparência: screenshots do canvas eram artefato (WebGL); com renderer Canvas, `toDataURL` vira medição fiel. Decoder PNG próprio validado contra PNG vermelho e contra cena mínima Phaser (que renderizava perfeitamente) |
+| **Causa raiz da tela preta encontrada** | ✅ PASS | 1) `game.scale.resize()` disparado pelo `ResizeObserver` a cada mudança transitória do layout **zerava o buffer do canvas 2D** entre frames (e o renderer `render` manual com 1 arg vazava TypeError próprio do teste). 2) `PhaserGame` nunca iniciava a cena do `roomId` — o Phaser só auto-inicia a 1ª cena da lista, então Agentes/Reunião mostravam o Escritório. |
+| Correção da renderização (renderer Canvas + resize com debounce + `scene.start` por sala) | ✅ PASS | `type: Phaser.CANVAS` (pintura previsível e medição fiel), ResizeObserver com debounce 300ms e troca só quando o tamanho real muda, `game.scene.add` explícito + `game.scene.start(SCENE_BY_ROOM[roomId])` |
+| **Verificação determinística das 3 salas** | ✅ PASS | 3 passes × 3 ambientes → **9/9 pintados**, zero `pageerror`: Escritório lum≈74, Agentes≈123, Reunião≈107 (luminância média do buffer do canvas, não da página) |
+| Arquitetura de cenas refatorada | ✅ PASS | `RoomSceneBase.ts` (`BaseRoomScene`: wiring stateUpdate/activity/agentClick, `spawn()`, camera fit), `OfficeScene`, `MeetingScene` (NEMO à cabeceira, fileiras frente a frente, mesa com brasão), `RestScene` (Copinho "☕", noDesk, ondulação orgânica, dartboard Vasco), `layoutAgents.ts` compartilhado, `preload.ts` (`loadRoomAssets`) |
+| Login + área privada por usuário | ✅ PASS | Backend `auth.py` (PBKDF2, `_data/users.json`), Bearer token via header, gate no `AppShell`, `TopBar` com logout; eventos por usuário em `_data/users/<id>/events.json` |
+| **Isolamento de dados por usuário** | ✅ PASS | E2E via API: A cria evento (200) → A vê 1, B vê 0; B registra 200; sessão persiste após reload (shell presente, auth ausente) |
+| Fallback quando não há render (webgl/context null) | ✅ PASS | `RoomBoundary` (ErrorBoundary + `webglAvailable` relaxado) + `RoomFallback` (12 cartões de agentes, CSS `.room-fallback-*`); E2E `--disable-gpu --disable-software-rasterizer` → 12 cartões, 0 canvas |
+| WebSocket ausente (pacote `websockets` não instalado) | ✅ PASS | health anuncia `squad_ws:false` e `useSquadSocket` usa polling — fim do "WebSocket handshake: Unexpected response code: 200" |
+| **Revisão PT-BR/UX** | ✅ PASS | Varredura encontrou e corrigiu: **mojibake duplo-encoding em `DashboardView.tsx` (tela inicial)** + textos 100% em inglês (`StatusBar`, `SquadSelector` "No squads found", `TasksView` "Tasks"/"+ Add", `AgentSidebar` "busy" e status crus, `ContextPanel` "answering local", `HistoryView` filtros crus, "Fallbacks", "AI Workspace", "Command Center", "▶ Exec", "🦄 Checkpoint", "NEMO AI STUDIO"→"NEMO ESTÚDIO IA") + typos ("comando seguros", "scr"→"CTR", "finanzas") |
+| E2E final no build de produção | ✅ PASS | Registro→salas (canvasLum 72/104/124, blackScreen=não)→logout OK, zero erros; sessão persistente OK; isolamento OK; fallback OK |
+| Build/type-check | ✅ PASS | `npm run build` em ~7s (aviso de chunk >500kB conhecido, Phaser é pesado); `noUnusedLocals` respeitado |
+
+**Arquivos criados/alterados (Missão 4):**
+```
+Criados:
+  dashboard/src/office/RoomSceneBase.ts   # BaseRoomScene (comportamento comum das salas)
+  dashboard/src/office/MeetingScene.ts    # Sala de Reunião (NEMO cabeceira + mesa brasão)
+  dashboard/src/office/RestScene.ts       # Copinho / Sala dos Agentes (layout orgânico)
+  dashboard/src/office/layoutAgents.ts    # layoutAgents + assignCharacters compartilhados
+  dashboard/src/office/preload.ts         # loadRoomAssets (preload comum)
+  dashboard/src/components/ide/RoomFallback.tsx  # painel de cartões (nunca tela preta)
+  dashboard/src/components/ide/RoomBoundary.tsx  # boundary + webglAvailable()
+Alterados:
+  dashboard/src/office/PhaserGame.tsx     # CANVAS, resize debounce, scene.start por room
+  dashboard/src/office/OfficeScene.ts     # estende BaseRoomScene
+  dashboard/src/office/AgentSprite.ts     # noDesk/labelOverrides, destruição segura
+  dashboard/src/types/idea.ts             # ViewId "reuniao"
+  dashboard/src/data/agents.ts            # VIEWS (Reunião), labels PT, typos
+  dashboard/src/components/ide/OfficeView.tsx / AppShell.tsx / TopBar.tsx / LoginView.tsx
+  dashboard/src/components/ide/DashboardView.tsx  # mojibake corrigido (tela inicial)
+  dashboard/src/components/{StatusBar,SquadSelector,TasksView,AgentSidebar,ContextPanel,HistoryView,MessageBubble,AgentProfileModal}.tsx
+  dashboard/src/styles/globals.css        # .room-fallback-*
+  auth.py, nemo_server.py                 # registro/login por usuário + isolamento de dados
+  RELATORIO_FINAL_MISSAO.md               # este relatório (missão 4)
+```
+
+**Limite conhecido (Missão 4):** tarefas/settings continuam client-side por usuário (isolamento por usuário aplicado aos eventos e à área autenticada); OK dentro do escopo validado.
+
+---
+
 ## 12. Git (Commits Enviados)
 
 ```

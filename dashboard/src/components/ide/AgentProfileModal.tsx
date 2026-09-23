@@ -69,7 +69,7 @@ export function AgentProfileModal({ onClose }: AgentProfileModalProps = {}) {
           </div>
           {agent.fallbacks && agent.fallbacks.length > 0 && (
             <div className="kv">
-              <strong>Fallbacks</strong>
+              <strong>Modelos reserva</strong>
               <span style={{ fontFamily: "Consolas, monospace", color: "var(--accentText)" }}>{agent.fallbacks.join(" → ")}</span>
             </div>
           )}

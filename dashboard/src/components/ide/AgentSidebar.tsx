@@ -55,7 +55,7 @@ export function AgentSidebar() {
               {isLive && (
                 <div className="st-live" style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <span style={{ width: 6, height: 6, borderRadius: 9, background: "var(--success)", display: "inline-block", animation: "pulse 1.4s infinite" }} />
-                  <span style={{ fontSize: 11, color: "var(--accent)" }}>busy</span>
+                  <span style={{ fontSize: 11, color: "var(--accent)" }}>ocupado</span>
                 </div>
               )}
             </div>
@@ -82,7 +82,7 @@ export function AgentSidebar() {
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="agent-name">{sq.info?.name ?? sq.code}</div>
-                  <div className="agent-role">{sq.status} · passo {sq.step?.current ?? 0}/{sq.step?.total ?? "?"}</div>
+                  <div className="agent-role">{sq.status === "running" ? "em execução" : sq.status === "checkpoint" ? "ponto de checagem" : "parado"} · passo {sq.step?.current ?? 0}/{sq.step?.total ?? "?"}</div>
                 </div>
               </div>
             ))}

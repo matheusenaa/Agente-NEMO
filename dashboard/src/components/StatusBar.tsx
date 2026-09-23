@@ -29,7 +29,7 @@ export function StatusBar() {
     return (
       <footer style={footerStyle}>
         <span style={{ color: "var(--text-secondary)" }}>
-          Select an active squad to monitor
+          Selecione um squad ativo para monitorar
         </span>
         <ConnectionDot connected={isConnected} />
       </footer>
@@ -40,7 +40,7 @@ export function StatusBar() {
     <footer style={footerStyle}>
       <div style={{ display: "flex", alignItems: "center", gap: 16, flex: 1, minWidth: 0 }}>
         <span>
-          Step {state.step.current}/{state.step.total}
+          Passo {state.step.current}/{state.step.total}
           {state.step.label ? ` — ${state.step.label}` : ""}
         </span>
         {state.startedAt && (
@@ -72,7 +72,7 @@ export function StatusBar() {
 function ConnectionDot({ connected }: { connected: boolean }) {
   return (
     <span
-      title={connected ? "Connected" : "Disconnected"}
+      title={connected ? "Conectado" : "Desconectado"}
       style={{
         width: 8,
         height: 8,

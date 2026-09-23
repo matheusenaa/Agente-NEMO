@@ -37,7 +37,7 @@ export function TasksView() {
     <section className="view-area">
       <div className="tasks-wrap">
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
-          <h2 style={{ margin: 0, fontSize: 18 }}>Tasks · {tasks.length}</h2>
+          <h2 style={{ margin: 0, fontSize: 18 }}>Tarefas · {tasks.length}</h2>
           <span className="status-pill running">▶ {running}</span>
           <span className="status-pill">⏳ {open}</span>
           <span className="status-pill done">✓ {done}</span>
@@ -50,7 +50,7 @@ export function TasksView() {
               onChange={(e) => setNewTitle(e.currentTarget.value)}
               onKeyDown={(e) => { if (e.key === "Enter") create(); }}
             />
-            <button className="tool-btn primary" onClick={create}>+ Add</button>
+            <button className="tool-btn primary" onClick={create}>+ Adicionar</button>
           </div>
         </div>
 

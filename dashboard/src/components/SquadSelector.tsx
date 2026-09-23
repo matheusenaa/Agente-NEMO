@@ -38,12 +38,12 @@ export function SquadSelector() {
           color: "var(--text-secondary)",
         }}
       >
-        Squads
+        Equipes
       </div>
       <div style={{ flex: 1, overflowY: "auto" }}>
         {squadList.length === 0 && (
           <div style={{ padding: "16px 12px", color: "var(--text-secondary)", fontSize: 12 }}>
-            No squads found
+            Nenhum squad encontrado
           </div>
         )}
         {squadList.map((squad) => (

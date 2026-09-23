@@ -53,7 +53,7 @@ export function MessageBubble({ message, showTimestamps }: Props) {
             {meta.model && <span>🤖 {meta.model}</span>}
             {meta.latencyMs != null && <span>⏱ {meta.latencyMs}ms</span>}
             {meta.promptTokens != null && <span>📝 {meta.promptTokens} tok</span>}
-            {meta.isFallback && <span style={{ color: "var(--warn)" }}>⚠️ fallback</span>}
+            {meta.isFallback && <span style={{ color: "var(--warn)" }}>⚠️ usou modelo reserva</span>}
           </div>
         )}
       </div>
