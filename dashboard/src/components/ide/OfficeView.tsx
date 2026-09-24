@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { lazy, Suspense, useRef, useState } from "react";
 import { SquadSelector } from "@/components/SquadSelector";
-import { PhaserGame, type RoomId } from "@/office/PhaserGame";
+import type { RoomController, RoomId } from "@/office/PhaserGame";
 import { StatusBar } from "@/components/StatusBar";
 import { AgentProfileModal } from "./AgentProfileModal";
 import { AgentAvatar } from "@/components/AgentAvatar";
@@ -9,6 +9,11 @@ import { RoomBoundary, webglAvailable } from "./RoomBoundary";
 import { AGENT_ROSTER } from "@/data/agents";
 import { useSquadStore } from "@/store/useSquadStore";
 import { useIdeStore } from "@/store/useIdeStore";
+
+// Phaser é ~1MB — carregado só quando o usuário entra no modo visual (lazy).
+const PhaserGame = lazy(() =>
+  import("@/office/PhaserGame").then((m) => ({ default: m.PhaserGame })),
+);
 
 const ROOM_META: Record<RoomId, { title: string; hint: string }> = {
   office: {
@@ -38,6 +43,7 @@ export function OfficeView({ roomId = "office" }: OfficeViewProps) {
   const tasks = useIdeStore((s) => s.tasks);
   const [agentModal, setAgentModal] = useState(false);
   const [webglOk] = useState(webglAvailable);
+  const roomController = useRef<RoomController | null>(null);
   const meta = ROOM_META[roomId];
   const fallback = <RoomFallback title={meta.title} subtitle={meta.hint} />;
 
@@ -123,7 +129,9 @@ export function OfficeView({ roomId = "office" }: OfficeViewProps) {
         <div style={{ flex: 1, minWidth: 0, position: "relative", background: "var(--bg0)" }}>
           {webglOk ? (
             <RoomBoundary fallback={fallback}>
-              <PhaserGame roomId={roomId} onAgentClick={handleAgentClick} />
+              <Suspense fallback={fallback}>
+                <PhaserGame roomId={roomId} onAgentClick={handleAgentClick} controllerRef={roomController} />
+              </Suspense>
             </RoomBoundary>
           ) : (
             fallback
@@ -157,7 +165,7 @@ export function OfficeView({ roomId = "office" }: OfficeViewProps) {
 
       <StatusBar />
 
-      {agentModal && <AgentProfileModal onClose={() => setAgentModal(false)} />}
+      {agentModal && <AgentProfileModal onClose={() => setAgentModal(false)} roomController={roomController} />}
     </section>
   );
 }

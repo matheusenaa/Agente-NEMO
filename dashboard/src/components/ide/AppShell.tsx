@@ -130,6 +130,11 @@ export function AppShell() {
     calendario: <CalendarView />,
   };
 
+  const isAdmin = authUser?.role === "admin";
+  const ADMIN_VIEWS = new Set(["workspace", "terminal"]);
+  const effectiveView =
+    !isAdmin && ADMIN_VIEWS.has(activeView) ? "dashboard" : activeView;
+
   if (checking) {
     return (
       <div className="auth-verify">
@@ -143,13 +148,15 @@ export function AppShell() {
     return <LoginView />;
   }
 
+  const isRoomView = effectiveView === "office" || effectiveView === "reuniao" || effectiveView === "agentes";
+
   return (
     <div className="ide-shell">
       <TopBar />
       <div className="ide-main">
-        <AgentSidebar />
+        {!isRoomView && <AgentSidebar />}
         <main className="center">
-          {viewMap[activeView] ?? <ChatView />}
+          {viewMap[effectiveView] ?? <ChatView />}
 
           {bottomOpen && (
             <div className="bottom">
@@ -171,7 +178,7 @@ export function AppShell() {
             </div>
           )}
         </main>
-        <ContextPanel />
+        {!isRoomView && <ContextPanel />}
       </div>
       <NotificationsLayer />
     </div>

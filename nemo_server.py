@@ -45,9 +45,13 @@ except Exception:
     pass
 
 import argparse
+import base64
+import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import shlex
 import subprocess
 import sys
@@ -87,7 +91,7 @@ if str(ROOT) not in sys.path:
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from openrouter_client import OpenRouterClient, CompletionResult
@@ -542,6 +546,14 @@ def _require_user(request: "Request") -> Dict[str, Any]:
     return user
 
 
+def _require_admin(request: "Request") -> Dict[str, Any]:
+    """Só ADMIN acessa arquivos do projeto, terminal e área administrativa."""
+    user = _require_user(request)
+    if not AUTH_STORE.is_admin(user.get("id", "")):
+        raise HTTPException(status_code=403, detail="Acesso restrito ao administrador (role 'admin').")
+    return user
+
+
 # ---------------------------------------------------------------------------
 # Autenticação / multiusuário
 # ---------------------------------------------------------------------------
@@ -592,12 +604,139 @@ def me(request: Request) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Login social (OAuth 2.0) — Google / Microsoft / Apple
+# ---------------------------------------------------------------------------
+
+from oauth import OAuthError, authorize_url, enabled_providers, exchange  # noqa: E402
+
+
+class OAuthStartResponse(BaseModel):
+    provider: str
+    url: str
+    state: str
+
+
+@app.get("/api/auth/oauth/status")
+def oauth_status() -> Dict[str, Any]:
+    """Lista os provedores OAuth habilitados (para a tela de login)."""
+    providers = enabled_providers()
+    return {"ok": True, "providers": [
+        {
+            "name": name,
+            "enabled": True,
+            "label": {
+                "google": "Google",
+                "microsoft": "Microsoft",
+                "apple": "Apple",
+            }.get(name, name),
+        }
+        for name in sorted(providers)
+    ]}
+
+
+@app.get("/api/auth/oauth/{provider}/start")
+def oauth_start(provider: str, request: Request) -> Dict[str, Any]:
+    """Gera a URL de autorização e o state (assinado) para o provedor."""
+    random_part = secrets.token_urlsafe(24)
+    # Assina o state para validar no callback (previne CSRF em login social).
+    digest = hmac.new(AUTH_STORE.secret, random_part.encode("utf-8"), hashlib.sha256).hexdigest()
+    # O provedor devolve apenas `state` — embutimos a assinatura junto.
+    state = f"{random_part}.{digest}"
+    redirect_uri = f"{_request_base(request)}/api/auth/oauth/{provider}/callback"
+    try:
+        url = authorize_url(provider, redirect_uri, state)
+    except OAuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message)
+    return {
+        "ok": True,
+        "provider": provider,
+        "url": url,
+        "state": state,
+    }
+
+
+@app.get("/api/auth/oauth/{provider}/callback")
+def oauth_callback(provider: str, request: Request, code: str = "", state: str = "") -> JSONResponse:
+    """Callback do provedor: valida state, troca o code por perfil e loga."""
+    if not code:
+        raise HTTPException(status_code=400, detail="Código de autorização ausente.")
+    if "." not in state:
+        raise HTTPException(status_code=403, detail="State ausente ou malformado. Tente novamente.")
+    random_part, _, sig = state.rpartition(".")
+    expected = hmac.new(AUTH_STORE.secret, random_part.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not random_part or not hmac.compare_digest(expected, sig or ""):
+        raise HTTPException(status_code=403, detail="State inválido ou expirado. Tente novamente.")
+    redirect_uri = f"{_request_base(request)}/api/auth/oauth/{provider}/callback"
+    try:
+        account = exchange(provider, code, redirect_uri)
+        user, token = AUTH_STORE.oauth_login(
+            provider,
+            account.get("provider_id", ""),
+            account.get("email", ""),
+            account.get("name", ""),
+        )
+    except OAuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message)
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message)
+
+    # Conclui no frontend: redireciona com token+user (hash) para /auth#oauth=1.
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"token": token, "user": user}).encode("utf-8")
+    ).rstrip(b"=").decode()
+    url = f"/#oauth={payload}"
+    html = (
+        "<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'>"
+        "<meta http-equiv='refresh' content='0;url={url}'></head>"
+        "<body><p>Login concluído — redirecionando…</p></body></html>"
+    ).format(url=url)
+    return HTMLResponse(html, status_code=200)
+
+
+def _request_base(request: Request) -> str:
+    """Base pública do request (schema://host) para montar redirect_uris."""
+    forwarded = request.headers.get("x-forwarded-proto", "")
+    scheme = forwarded.split(",")[0].strip() or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.url.netloc
+    return f"{scheme}://{host}"
+
+
+# ---------------------------------------------------------------------------
+# Gestão de usuários / permissões (somente ADMIN)
+# ---------------------------------------------------------------------------
+
+class RoleRequest(BaseModel):
+    userId: str = ""
+    role: str = ""
+
+
+@app.get("/api/admin/users")
+def admin_list_users(request: Request) -> Dict[str, Any]:
+    _require_admin(request)
+    return {"ok": True, "users": AUTH_STORE.list_users()}
+
+
+@app.put("/api/admin/users/role")
+def admin_set_role(req: RoleRequest, request: Request) -> Dict[str, Any]:
+    _require_admin(request)
+    if not req.userId:
+        raise HTTPException(status_code=400, detail="Informe userId.")
+    if req.role not in ("user", "admin"):
+        raise HTTPException(status_code=400, detail="Role inválida. Use 'user' ou 'admin'.")
+    user = AUTH_STORE.set_role(req.userId, req.role)
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+    return {"ok": True, "user": user}
+
+
+# ---------------------------------------------------------------------------
 # Calendário — eventos persistidos por usuário (JSON em _data/users/<id>/events.json)
 # ---------------------------------------------------------------------------
 
 
 @app.get("/api/nemo/context")
-def context() -> Dict[str, Any]:
+def context(request: Request) -> Dict[str, Any]:
+    _require_user(request)
     return {
         "project": PROJECT_NAME,
         "root": str(ROOT),
@@ -609,7 +748,8 @@ def context() -> Dict[str, Any]:
 
 
 @app.get("/api/nemo/agents")
-def agents() -> List[Dict[str, Any]]:
+def agents(request: Request) -> List[Dict[str, Any]]:
+    _require_user(request)
     return _discover_agents()
 
 
@@ -681,7 +821,8 @@ def delete_event(event_id: str, request: Request) -> Dict[str, Any]:
 
 
 @app.post("/api/nemo/chat")
-def chat(req: ChatRequest) -> Dict[str, Any]:
+def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
+    _require_user(request)
     agent = _agent_persona(req.agent) or {
         "id": req.agent, "name": "Nemo", "title": "Assistente", "category": "assistant",
         "role": "Assistente pessoal.", "defaultModel": CATEGORY_MODEL_DEFAULT,
@@ -805,7 +946,8 @@ def _is_connection_error(message: str) -> bool:
 
 
 @app.get("/api/nemo/files")
-def list_files(path: str = Query("", description="Diretório relativo à raiz do projeto")):
+def list_files(request: Request, path: str = Query("", description="Diretório relativo à raiz do projeto")):
+    _require_admin(request)
     p = _safe_resolve(path)
     if not p.is_dir():
         raise HTTPException(status_code=404, detail="Diretório não encontrado.")
@@ -827,7 +969,8 @@ def list_files(path: str = Query("", description="Diretório relativo à raiz do
 
 
 @app.get("/api/nemo/file")
-def read_file(path: str = Query(..., description="Caminho relativo")):
+def read_file(request: Request, path: str = Query(..., description="Caminho relativo")):
+    _require_admin(request)
     p = _safe_resolve(path)
     if not p.is_file():
         raise HTTPException(status_code=404, detail="Arquivo não encontrado.")
@@ -842,7 +985,8 @@ def read_file(path: str = Query(..., description="Caminho relativo")):
 
 
 @app.post("/api/nemo/file/save")
-def save_file(req: FileSaveRequest) -> Dict[str, Any]:
+def save_file(req: FileSaveRequest, request: Request) -> Dict[str, Any]:
+    _require_admin(request)
     p = _safe_resolve(req.path)
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -853,7 +997,8 @@ def save_file(req: FileSaveRequest) -> Dict[str, Any]:
 
 
 @app.post("/api/nemo/terminal")
-def terminal(req: TerminalRequest) -> Dict[str, Any]:
+def terminal(req: TerminalRequest, request: Request) -> Dict[str, Any]:
+    _require_admin(request)
     if not req.command.strip():
         raise HTTPException(status_code=400, detail="Comando vazio.")
     return _run_command(req.command, force=req.force, timeout=req.timeout)
@@ -874,13 +1019,15 @@ def models():
 
 
 @app.get("/api/nemo/snapshot")
-def snapshot() -> Dict[str, Any]:
+def snapshot(request: Request) -> Dict[str, Any]:
+    _require_user(request)
     return _squads_snapshot()
 
 
 @app.get("/api/nemo/auth")
-def auth() -> Dict[str, Any]:
-    """Valida a chave OpenRouter junto ao endpoint oficial /auth/key."""
+def auth(request: Request) -> Dict[str, Any]:
+    """Valida a chave OpenRouter junto ao endpoint oficial /auth/key (admin)."""
+    _require_admin(request)
     return get_client().check_auth()
 
 

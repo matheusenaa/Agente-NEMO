@@ -56,6 +56,11 @@ export class AgentSprite {
   private hoverZone: Phaser.GameObjects.Zone;
   private busy = false;
   private labelOverrides: Partial<Record<AgentStatus, string>>;
+  private homeX: number;
+  private homeY: number;
+  private resting = false;
+  private travelTween?: Phaser.Tweens.Tween;
+  private parts: { obj: Phaser.GameObjects.GameObject & { x: number; y: number; depth: number; setDepth: (d: number) => void }; dx: number; dy: number; baseDepth: number; depthFromY: boolean }[] = [];
 
   constructor(
     scene: Phaser.Scene,
@@ -72,6 +77,8 @@ export class AgentSprite {
     this.characterName = characterName;
     this.deskVariant = deskVariant;
     this.labelOverrides = opts?.labelOverrides ?? {};
+    this.homeX = x;
+    this.homeY = y;
 
     // Avatar — positioned further behind the desk so head/torso is clearly visible
     const avatarKey = this.getAvatarKey(agent.status);
@@ -165,7 +172,71 @@ export class AgentSprite {
       if (onClick) onClick(agent.id);
     });
 
+    this.trackParts();
     this.startAnimation(agent.status);
+  }
+
+  /** Registra cada game object com seu offset fixo em relação à base (homeX, homeY). */
+  private trackParts(): void {
+    const push = (obj: Phaser.GameObjects.GameObject & { x: number; y: number; depth: number; setDepth: (d: number) => void }, depthFromY: boolean) => {
+      this.parts.push({ obj, dx: obj.x - this.homeX, dy: obj.y - this.homeY, baseDepth: obj.depth, depthFromY });
+    };
+    push(this.avatar, true);
+    push(this.avatarRing, true);
+    if (this.deskTable) push(this.deskTable, true);
+    if (this.desk) push(this.desk, true);
+    if (this.coffeeMug) push(this.coffeeMug, true);
+    push(this.iconChip, false);
+    push(this.iconText, false);
+    push(this.nameText, false);
+    push(this.badgeBg, false);
+    push(this.statusDot, false);
+    push(this.statusText, false);
+    push(this.hoverZone, false);
+  }
+
+  /** Desloca o agente (mundo Phaser) para um novo local, animando todos os elementos juntos. */
+  moveTo(targetX: number, targetY: number, onRest?: boolean): void {
+    this.travelTween?.stop();
+    this.travelTween = undefined;
+    const dx = targetX - this.homeX;
+    const dy = targetY - this.homeY;
+    if (dx === 0 && dy === 0) return;
+
+    this.parts.forEach((p) => {
+      this.scene.tweens.add({
+        targets: p.obj,
+        x: p.obj.x + dx,
+        y: p.obj.y + dy,
+        // Mantém a ordenação de profundidade proporcional ao novo y (quem
+        // está "mais perto" do observador fica por cima, como na mesa/sofá)
+        ...(p.depthFromY ? { depth: p.baseDepth + dy } : {}),
+        duration: 900,
+        ease: 'Cubic.easeInOut',
+      });
+    });
+    this.homeX = targetX;
+    this.homeY = targetY;
+    this.resting = !!onRest;
+
+    if (onRest) {
+      this.bubblePeriod?.destroy();
+      this.bubblePeriod = undefined;
+      this.statusText.setText('🛋️ Descansando no sofá');
+      this.statusText.setColor('#ffd166');
+    } else {
+      this.statusText.setText(this.labelFor(this.agent.status));
+      this.statusText.setColor(this.getStatusHexColor(this.agent.status));
+    }
+    this.avatarRing.clear();
+  }
+
+  isResting(): boolean {
+    return this.resting;
+  }
+
+  homePosition(): { x: number; y: number } {
+    return { x: this.homeX, y: this.homeY };
   }
 
   // ------------------------------------------------------------------
@@ -430,6 +501,7 @@ export class AgentSprite {
   destroy(): void {
     this.animTimer?.destroy();
     this.animTween?.stop();
+    this.travelTween?.stop();
     this.bubblePeriod?.destroy();
     this.hideBubble();
     this.deskTable?.destroy();

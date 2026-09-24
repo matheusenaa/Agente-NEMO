@@ -16,12 +16,19 @@ const SCENE_BY_ROOM: Record<RoomId, string> = {
   agentes: 'RestScene',
 };
 
+export interface RoomController {
+  sendToRest: (agentId: string) => void;
+  returnToDesk: (agentId: string) => void;
+  isResting: (agentId: string) => boolean;
+}
+
 interface PhaserGameProps {
   roomId?: RoomId;
   onAgentClick?: (agentId: string) => void;
+  controllerRef?: { current: RoomController | null };
 }
 
-export function PhaserGame({ roomId = 'office', onAgentClick }: PhaserGameProps) {
+export function PhaserGame({ roomId = 'office', onAgentClick, controllerRef }: PhaserGameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const clickRef = useRef(onAgentClick);
@@ -79,6 +86,12 @@ export function PhaserGame({ roomId = 'office', onAgentClick }: PhaserGameProps)
         lastW = w;
         lastH = h;
         game.scale.resize(w, h);
+        // Recalcula zoom + câmera da sala ativa para caber o novo viewport.
+        // Sem isso a sala fica cortada ou flutuando quando a janela muda.
+        const activeScenes = game.scene.getScenes(true);
+        for (const scene of activeScenes) {
+          (scene as unknown as { fitViewport?: (x: number, y: number) => void }).fitViewport?.(w, h);
+        }
       }
     };
     const ro = new ResizeObserver(() => {
@@ -140,18 +153,29 @@ export function PhaserGame({ roomId = 'office', onAgentClick }: PhaserGameProps)
 
     const onAgentClick = (id: string) => clickRef.current?.(id);
 
-    emitSquad();
-
     const unsubSquad = useSquadStore.subscribe(emitSquad);
     const unsubIde = useIdeStore.subscribe((state, prev) => {
       if (state.liveStatus !== prev.liveStatus) emitActivity();
       if (state.tasks !== prev.tasks) emitActivity();
     });
 
+    // Expõe um controlador imperativo para o React (ex.: botão "sofá").
+    // As cenas são criadas/recriadas por remount, então o controller apenas
+    // dispara eventos na cena ativa — resolvido via scene.events.
+    const attachController = (scene: BaseRoomScene) => {
+      if (!controllerRef) return;
+      controllerRef.current = {
+        sendToRest: (id) => scene.events.emit('toRest', id),
+        returnToDesk: (id) => scene.events.emit('toDesk', id),
+        isResting: (id) => scene.isAgentResting(id),
+      };
+    };
+
     const reShot = setInterval(() => {
       const scene = getScene();
       if (scene) {
         scene.setAgentClickHandler(onAgentClick);
+        attachController(scene);
         scene.events.off('agentClick');
         scene.events.on('agentClick', onAgentClick);
         emitSquad();
@@ -166,6 +190,7 @@ export function PhaserGame({ roomId = 'office', onAgentClick }: PhaserGameProps)
       unsubIde();
       const scene = getScene();
       if (scene) scene.events.off('agentClick');
+      if (controllerRef) controllerRef.current = null;
     };
     // Intentional: apenas na montagem — a cena é trocada por remount do React
   }, []);

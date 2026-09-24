@@ -1,12 +1,15 @@
+import { useState } from "react";
 import { useIdeStore } from "@/store/useIdeStore";
 import { getAgent } from "@/data/agents";
 import { AgentAvatar } from "@/components/AgentAvatar";
+import type { RoomController } from "@/office/PhaserGame";
 
 interface AgentProfileModalProps {
   onClose?: () => void;
+  roomController?: { current: RoomController | null };
 }
 
-export function AgentProfileModal({ onClose }: AgentProfileModalProps = {}) {
+export function AgentProfileModal({ onClose, roomController }: AgentProfileModalProps = {}) {
   const activeAgentId = useIdeStore((s) => s.activeAgentId);
   const liveStatus = useIdeStore((s) => s.liveStatus);
   const toggleRight = useIdeStore((s) => s.toggleRight);
@@ -24,6 +27,22 @@ export function AgentProfileModal({ onClose }: AgentProfileModalProps = {}) {
   const openChat = () => {
     setActiveAgent(agent.id);
     setView("chat");
+  };
+
+  const resting = roomController?.current?.isResting(agent.id) ?? false;
+  const [, setFrame] = useState(0);
+  const refresh = () => setFrame((f) => f + 1);
+
+  const toggleRest = () => {
+    const ctl = roomController?.current;
+    if (!ctl) return;
+    if (resting) {
+      ctl.returnToDesk(agent.id);
+    } else {
+      ctl.sendToRest(agent.id);
+    }
+    // Re-lê o estado do sofá para atualizar o botão
+    setTimeout(refresh, 400);
   };
 
   return (
@@ -83,6 +102,11 @@ export function AgentProfileModal({ onClose }: AgentProfileModalProps = {}) {
             <button className="tool-btn" onClick={() => { setActiveAgent(agent.id); toggleBottom(); }}>
               🖥️ Logs
             </button>
+            {roomController && (
+              <button className={`tool-btn ${resting ? "" : "primary"}`} onClick={toggleRest}>
+                {resting ? "🪑 Voltar à mesa" : "🛋️ Enviar para o sofá"}
+              </button>
+            )}
           </div>
         </div>
       </div>

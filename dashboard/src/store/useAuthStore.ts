@@ -13,6 +13,8 @@ interface AuthState {
   logout: () => Promise<void>;
   restore: () => Promise<void>;
   clearError: () => void;
+  /** Conclui o login social (token recebido via callback OAuth). */
+  completeOAuth: (user: AuthUser, token: string) => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -73,6 +75,9 @@ export const useAuthStore = create<AuthState>()(
       },
 
       clearError: () => set({ error: null }),
+
+      completeOAuth: (user, token) =>
+        set({ user, token, checking: false, error: null }),
     }),
     {
       name: "nemo-auth",

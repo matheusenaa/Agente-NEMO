@@ -151,6 +151,44 @@ body,
 .auth-submit:disabled { opacity: 0.55; cursor: default; }
 
 .auth-switch { margin-top: 18px; font-size: 13px; color: var(--text2); }
+
+.oauth-block { width: 100%; margin-top: 16px; display: flex; flex-direction: column; gap: 12px; }
+.oauth-sep { display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text3); }
+.oauth-sep::before, .oauth-sep::after { content: ""; flex: 1; height: 1px; background: var(--border2); }
+.oauth-buttons { display: flex; flex-direction: column; gap: 8px; }
+.oauth-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border2);
+  background: var(--bg2);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.oauth-btn:hover:not(:disabled) { transform: translateY(-1px); border-color: var(--accent); background: var(--bg3); }
+.oauth-btn:disabled { opacity: 0.55; cursor: default; }
+.oauth-logo {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  color: #fff;
+  flex-shrink: 0;
+}
+.oauth-google { background: #4285f4; }
+.oauth-microsoft { background: #2f2f2f; }
+.oauth-apple { background: #000; }
 .auth-link {
   background: none;
   border: none;

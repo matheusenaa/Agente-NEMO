@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useSquadStore } from "@/store/useSquadStore";
+import { useAuthStore } from "@/store/useAuthStore";
 import type { WsMessage } from "@/types/state";
 
 const RECONNECT_BASE_MS = 1000;
@@ -57,11 +58,17 @@ export function useSquadSocket() {
 
       const poll = async () => {
         if (disposed) return;
+        const token = useAuthStore.getState().token;
+        // Sem sessão, pular: as rotas de snapshot exigem autenticação e o
+        // 401 poluiria o console (na tela de login ainda não há token).
+        if (!token) return;
+        const headers: Record<string, string> = { "Cache-Control": "no-cache" };
+        if (token) headers.Authorization = `Bearer ${token}`;
         // Tenta as URLs em ordem: produção primeiro (backend), depois dev (plugin Vite).
         for (const url of SNAPSHOT_URLS) {
           if (disposed) return;
           try {
-            const res = await fetch(url, { cache: "no-store" });
+            const res = await fetch(url, { cache: "no-store", headers });
             if (!res.ok) continue;
             const data = await res.json();
             if (data && Array.isArray(data.squads)) {

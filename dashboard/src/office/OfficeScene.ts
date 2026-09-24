@@ -1,4 +1,4 @@
-import { CELL_W, CELL_H, MARGIN, WALL_H } from './palette';
+import { CELL_W, CELL_H, MARGIN, WALL_H, TILE } from './palette';
 import { BaseRoomScene } from './RoomSceneBase';
 import { assignCharacters, layoutAgents } from './layoutAgents';
 import { getAgentRole } from './agentCast';
@@ -55,5 +55,11 @@ export class OfficeScene extends BaseRoomScene {
       const deskVariant = getAgentRole(agent.id).desk;
       this.spawn(agent, x, y, characterName, deskVariant);
     }
+  }
+
+  /** Sofá do lounge (fundo da sala), onde os agentes vão descansar. */
+  protected restAnchor(): { x: number; y: number } | null {
+    const loungeY = this.roomH - MARGIN - TILE * 0.5;
+    return { x: this.roomW / 2, y: loungeY + TILE * 0.3 - 40 };
   }
 }

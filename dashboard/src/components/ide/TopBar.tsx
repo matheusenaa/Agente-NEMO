@@ -14,6 +14,8 @@ function getUserName(): string {
   return "Operador";
 }
 
+const ADMIN_VIEWS = new Set(["workspace", "terminal"]);
+
 export function TopBar() {
   const activeView = useIdeStore((s) => s.activeView);
   const setView = useIdeStore((s) => s.setView);
@@ -29,6 +31,8 @@ export function TopBar() {
   const logout = useAuthStore((s) => s.logout);
   const [notifOpen, setNotifOpen] = useState(false);
   const pendingTasks = tasks.filter((t) => t.status === "pending").length;
+  const isAdmin = authUser?.role === "admin";
+  const visibleViews = VIEWS.filter((v) => !ADMIN_VIEWS.has(v.id) || isAdmin);
 
   return (
     <header className="ide-top">
@@ -41,7 +45,7 @@ export function TopBar() {
       </div>
 
       <nav className="views">
-        {VIEWS.map((v) => (
+        {visibleViews.map((v) => (
           <button key={v.id} className={`view-tab ${activeView === v.id ? "on" : ""}`} onClick={() => setView(v.id as ViewId)}>
             <span>{v.icon}</span>
             <span>{v.label}</span>

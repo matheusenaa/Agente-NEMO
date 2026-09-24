@@ -2,6 +2,7 @@
 
 **Data original:** 2026-09-18  
 **Atualização (missão 2 — interface+estabilidade):** 2026-09-19  
+**Atualização (missão 6 — escritório estável, perfis USER/ADMIN e login Google/OAuth):** 2026-09-24  
 **Projeto:** NEMO IDE / Open Squad Dashboard  
 **Repositório:** https://github.com/matheusenaa/Agente-NEMO (público, branch `main`)  
 **Executável:** `dist/NEMO_IDE/NEMO_IDE.exe` (23 MB, PyInstaller)  
@@ -416,13 +417,80 @@ RELATORIO_FINAL_MISSAO.md                       # este relatório (missão 5)
 
 ---
 
+### Missão 6 (2026-09-24) — escritório estável, perfis USER/ADMIN e login Google (OAuth)
+
+> **Objetivo**: eliminar de vez a percepção de "recarregando/ficando foda" no Escritório (fundo cortado, reinicialização a cada atualização de estado) + **proteger arquivos/rotas administrativas no backend com perfis USER/ADMIN (403 por role)** + preparar **login Google (OAuth)** com Google/Microsoft/Apple.
+
+#### Parte 1 — Escritório estável e com descanso (sofá)
+
+| Tarefa | Status | Evidência |
+|--------|--------|-----------|
+| Diagnóstico do fundo cortado/flutuando | ✅ PASS | Canvas ficava **680x432** em 1440x900 porque o `AppShell` sempre renderizava `AgentSidebar`+`ContextPanel` ao lado da sala; e o **zoom/câmera nunca eram recalculados no resize** (`game.scale.resize()` só esticava o buffer; `renderScene` usava `game.config.width`, que nunca muda) — a sala nascia com enquadramento do load inicial e ficava cortada/flutuando quando a janela mudava de tamanho |
+| Sala ocupa a tela (sem painéis laterais) | ✅ PASS | `AppShell` omite sidebar/contexto nas vistas `office`/`reuniao`/`agentes` → canvas **1200x416** em 1440x900 (antes 680x432), **784x428** em 1024x720 e **1680x440** em 1920x1080; página **nunca com scroll** em nenhum tamanho |
+| Reenquadramento no resize | ✅ PASS | Novo `fitViewport(w,h)` + `fitCamera()` em `RoomSceneBase`: zoom determinístico `min(fitW/(roomW+32), fitH/(roomH+32), 2)` com piso 0.35, centrado no centro da sala; `applyResize` do `PhaserGame` chama `fitViewport` após o `game.scale.resize` → zoom recalcula (0.605→0.622→0.64) e a sala inteira permanece visível nas 3 resoluções |
+| Atualização de status sem rebuild (fim do "reload") | ✅ PASS | `onStateUpdate` compara o elenco anterior (`lastLayout`) — mesmos agentes na mesma célula → atualiza apenas status via `sprite.updateStatus` (in-place); elenco/posição mudou → renderiza de novo. O escritório não "pisca/recarrega" mais a cada mudança de estado do squad |
+| Posições estáveis | ✅ PASS | Layout computado uma vez em `renderScene` e armazenado; novas renderizações reutilizam as mesmas células (sem agentes "pulando" de lugar, exceto na transição de descanso) |
+| Clique no agente → perfil | ✅ PASS | `RoomSceneBase` emite `agentClick`; `PhaserGame` propaganda para a `AgentProfileModal`; Playwright calcula a posição do avatar via matriz de câmera e clica — modal abre (modal=1) |
+| **Sofá / descanso do agente** | ✅ PASS | `sendAgentToRest`/`returnAgentToDesk` + `restAnchor()` em `OfficeScene` (posição do lounge). `AgentSprite.moveTo()` anima **todas as partes** (avatar, mesa, caneca, nome, badge, status) com tween de 900 ms (profundidade ajustada por parte), status "🛋️ Descansando no sofá", `isAgentResting()`. Modal ganhou botão "🛋️ Enviar para o sofá"/"🪑 Voltar à mesa". E2E: nemo {496,280}→{290,514} (resting=true) e volta (resting=false) |
+| Performance / lazy loading | ✅ PASS | `OfficeView` carrega `PhaserGame` via `React.lazy`+`Suspense` (fallback `RoomFallback`); build isola Phaser no chunk lazy **`PhaserGame-*.js` 1.513,86 kB** (gzip 349,87 kB); bundle principal **308,22 kB** (gzip 95,78 kB) — a primeira tela não baixa o Phaser |
+| Regressão das 3 salas | ✅ PASS | `nemo_e2e.mjs`: Escritório/Reunião/Agentes pintados (canvasLum 54/109/70), zero pageerror; logout/sessão/isolamento/fallback OK |
+
+#### Parte 2 — Perfis USER/ADMIN + proteção de rotas administrativas (403 por role)
+
+| Tarefa | Status | Evidência |
+|--------|--------|-----------|
+| Campo `role` nos usuários | ✅ PASS | `auth.py`: registro cria com `role:"user"`; `role_of()`, `is_admin()`, `set_role()`, `list_users()`; login/token devolvem o role (sem hash) |
+| Login social reutiliza conta por e-mail | ✅ PASS | `AuthStore.oauth_login(provider, id, email, name)`: se já existe conta com o mesmo e-mail, reutiliza-a (preservando admin); senão cria com `role:"user"` + origem `oauth` |
+| Rotas administrativas com 403 | ✅ PASS | `_require_admin` em `/api/nemo/files`, `/api/nemo/file`, `/api/nemo/file/save`, `/api/nemo/terminal`, `/api/nemo/auth` (valida chave OpenRouter) e `/api/admin/*`. `_require_user` em snapshot/context/agents/chat/events. Medição real: **admin=200, usuário comum=403, sem token=401** em todas as rotas admin; snapshot/context/agents/chat/events **200 para ambos** |
+| Gestão de usuários no backend | ✅ PASS | `GET /api/admin/users` (lista) + `PUT /api/admin/users/role` (promove/rebaixa) — ambos só admin. Promoção de `matheusenaa@gmail.com` → `admin` validada via API e persistida |
+| Frontend respeita o role | ✅ PASS | `TopBar` oculta "Área de Trabalho" e "Terminal" para não-admin; `AppShell` redireciona não-admin para o Painel se tentar essas vistas; `useSquadSocket` envia o Bearer token no polling do snapshot (e **pula o polling sem sessão** — sumiram os 401 no console da tela de login) |
+| Ajuste do `/api/nemo/snapshot` | ✅ PASS | Snapshot é apenas **autenticado** (não admin): alimenta o Escritório de qualquer usuário logado; sem token → 401 |
+| Build/type-check | ✅ PASS | `npm run build` OK (95 módulos, ~6s); aviso de chunk Phaser conhecido |
+
+#### Parte 3 — Login Google (OAuth 2.0) com Google / Microsoft / Apple
+
+> **OBS da rede INEP:** a máquina não alcança `google.com`/`login.microsoftonline.com` etc. — o fluxo completo só pode ser validado num ambiente com internet (outra rede/hotspot/Render). O código abaixo foi **implementado e até onde dá validado localmente** (501 quando não configurado, assinatura de state 403 em handshake inválido, endpoints registrados).
+
+| Tarefa | Status | Evidência |
+|--------|--------|-----------|
+| Módulo `oauth.py` (somente stdlib) | ✅ PASS | `authorize_url`/`exchange` por provedor: **Google** (OpenID userinfo), **Microsoft** (Graph `/me`, tenant comum) e **Apple** (id_token ES256, client secret gerado com PKCS8/PEM via `cryptography` + SLT raw r\|\|s). Ativação automática por credenciais no `.env` |
+| Endpoints OAuth no backend | ✅ PASS | `GET /api/auth/oauth/status` (lista provedores habilitados), `GET /api/auth/oauth/{provider}/start` (gera URL + state **assinado** HMAC-SHA256, embutido no state — provedores só devolvem `state`), `GET /api/auth/oauth/{provider}/callback` (valida state → troca code → perfil → `oauth_login` → redireciona para `/#oauth=<payload>`). Rotas confirmadas no app FastAPI |
+| Frontend (tela de login) | ✅ PASS | `LoginView` consulta `/api/auth/oauth/status`; quando há provedor habilitado exibe "ou entre com" + botões (Google/Microsoft/Apple); callback decodifica `#oauth=` e chama `completeOAuth` no store (novo método). Sem provedor configurado, os botões não aparecem |
+| Validação de erros | ✅ PASS | provider desconhecido → 400; sem credenciais → **501**; state ausente/malformado/assinatura errada → **403**; code ausente → 400 |
+| `.env.example` | ✅ PASS | Adicionados `AUTH_SECRET`, `GOOGLE_CLIENT_ID/SECRET`, `MICROSOFT_CLIENT_ID/SECRET`, `APPLE_CLIENT_ID`, `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY`, `OAUTH_REDIRECT_BASE` (todos placeholder/documentados) |
+| Segurança | ✅ PASS | State assinado (CSRF em login social); segredo do `AUTH_SECRET` cai para auto-gerado por boot se ausente; token NEMO reutilizado como sessão após OAuth |
+
+**Arquivos alterados (Missão 6):**
+```
+dashboard/src/office/RoomSceneBase.ts     # fitCamera/fitViewport, lastLayout, updateStatus in-place, send/return to rest
+dashboard/src/office/AgentSprite.ts       # parts[]+trackParts, moveTo (tween completo), homePosition, isResting
+dashboard/src/office/OfficeScene.ts       # restAnchor() do lounge
+dashboard/src/office/PhaserGame.tsx       # RoomController, fitViewport no resize, attachController
+dashboard/src/components/ide/OfficeView.tsx       # lazy(PhaserGame)+Suspense, controllerRef
+dashboard/src/components/ide/AgentProfileModal.tsx # botões sofá/mesa
+dashboard/src/components/ide/AppShell.tsx          # sala em tela cheia + guard de vistas admin
+dashboard/src/components/ide/TopBar.tsx            # oculta Área de Trabalho/Terminal p/ não-admin
+dashboard/src/components/ide/LoginView.tsx         # botões OAuth + tratamento do #oauth= callback
+dashboard/src/store/useAuthStore.ts       # completeOAuth + role no AuthUser
+dashboard/src/api/auth.ts                 # AuthUser.role ("admin"|"user")
+dashboard/src/api/nemo.ts                 # tokens já enviados (Bearer) em todas as chamadas
+dashboard/src/hooks/useSquadSocket.ts     # token no polling + skip sem sessão (sem 401)
+dashboard/src/styles/globals.css          # .oauth-* (botões de login social)
+auth.py                      # role + oauth_login + admin helpers
+nemo_server.py               # _require_admin/_require_user, rotas admin/users, endpoints OAuth
+oauth.py                     # NOVO: provedores Google/Microsoft/Apple (stdlib)
+.env.example                 # AUTH_SECRET + credenciais OAuth (placeholder)
+RELATORIO_FINAL_MISSAO.md    # este relatório (missão 6)
+```
+
+**Limites (Missão 6):** (1) o fluxo OAuth **real** (troca de código) não pode ser validado da rede INEP — falta credencial dos provedores + internet; (2) Apple requer `pip install cryptography` na máquina de produção; (3) `_data/` (usuários/senhas hash) continua fora do repositório (`.gitignore`).
+
+---
+
 ## 12. Git (Commits Enviados)
 
 ```
-888c50b fix: corrigir renderizacao dos ambientes - CANVAS + debounce resize + cena por sala + fallback funcional
-66a2b49 feat: login com area privada por usuario e isolamento de dados no backend
-df3f66d feat: frase ambiente estavel (rotacao a cada 10 min com timer unico) e exclusao de historico com confirmacao
-8a08777 fix: padronizar portugues da interface (dashboards, agentes, textos) e atualizar relatorio
+<commit-awaits> feat(mission6): escritorio estavel (fit resize, status in-place, sofa) + perfis USER/ADMIN (403) + login Google/OAuth
 ... (histórico anterior)
 ```
 

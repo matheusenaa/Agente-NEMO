@@ -5,6 +5,18 @@ import { AgentAvatar } from "@/components/AgentAvatar";
 
 type Mode = "login" | "register";
 
+interface OAuthProviderInfo {
+  name: string;
+  label: string;
+  icon: string;
+}
+
+const OAUTH_ICONS: Record<string, string> = {
+  google: "▶",
+  microsoft: "▣",
+  apple: "",
+};
+
 function Field(props: {
   label: string;
   type?: string;
@@ -41,6 +53,8 @@ export function LoginView() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [serverOk, setServerOk] = useState(false);
+  const [oauthProviders, setOauthProviders] = useState<OAuthProviderInfo[]>([]);
+  const [oauthError, setOauthError] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -52,6 +66,63 @@ export function LoginView() {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/auth/oauth/status", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (alive && data?.providers?.length) {
+          setOauthProviders(
+            data.providers.map((p: { name: string; label: string }) => ({
+              name: p.name,
+              label: p.label ?? p.name,
+              icon: OAUTH_ICONS[p.name] ?? "",
+            })),
+          );
+        }
+      })
+      .catch(() => {
+        /* sem OAuth não configurado — whitelist vazia */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Conclusão do login social: o servidor redireciona para /#oauth=<payload>.
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash.startsWith("#oauth=")) {
+      try {
+        const raw = hash.slice("#oauth=".length);
+        const padded = raw + "=".repeat((4 - (raw.length % 4)) % 4);
+        const payload = JSON.parse(
+          atob(padded.replace(/-/g, "+").replace(/_/g, "/")),
+        );
+        if (payload?.token && payload?.user) {
+          useAuthStore.getState().completeOAuth(payload.user, payload.token);
+          setOauthError("");
+        }
+      } catch {
+        setOauthError("Falha ao concluir o login social. Tente novamente.");
+      }
+      window.history.replaceState(null, "", "/");
+    }
+  }, []);
+
+  const startOAuth = async (provider: string) => {
+    setOauthError("");
+    try {
+      const res = await fetch(`/api/auth/oauth/${provider}/start`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data?.url) window.location.assign(data.url);
+      else throw new Error("URL de autorização ausente.");
+    } catch (err) {
+      setOauthError(`Não foi possível iniciar o login ${provider}.`);
+    }
+  };
 
   useEffect(() => () => clearError(), [clearError]);
 
@@ -135,6 +206,30 @@ export function LoginView() {
                   : "Criar conta"}
           </button>
         </form>
+
+        {oauthProviders.length > 0 && (
+          <div className="oauth-block">
+            <div className="oauth-sep">
+              <span>ou entre com</span>
+            </div>
+            <div className="oauth-buttons">
+              {oauthProviders.map((p) => (
+                <button
+                  key={p.name}
+                  className="oauth-btn"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => startOAuth(p.name)}
+                  title={`Entrar com ${p.label}`}
+                >
+                  <span className={`oauth-logo oauth-${p.name}`}>{p.icon}</span>
+                  <span>{p.label}</span>
+                </button>
+              ))}
+            </div>
+            {oauthError && <div className="auth-error">⚠️ {oauthError}</div>}
+          </div>
+        )}
 
         <div className="auth-switch">
           {mode === "login" ? (

@@ -23,7 +23,7 @@ import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 PBKDF2_ITERATIONS = 200_000
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 7  # 7 dias
@@ -150,6 +150,7 @@ class AuthStore:
             "name": name,
             "email": email,
             "password_hash": self._hash_password(password),
+            "role": "user",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         self._users[user_id] = record
@@ -165,6 +166,33 @@ class AuthStore:
         public = {k: v for k, v in user.items() if k != "password_hash"}
         return public, self._issue_token(user["id"])
 
+    # ------------------------------------------------------------------
+    # Roles (USER / ADMIN)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def role_of(user: Optional[Dict[str, Any]]) -> str:
+        """Role do usuário (default 'user'). Contas sem o campo são tratadas como USER."""
+        return "admin" if (user or {}).get("role") == "admin" else "user"
+
+    def is_admin(self, user_id: str) -> bool:
+        user = self._users.get(user_id)
+        return bool(user) and user.get("role") == "admin"
+
+    def set_role(self, user_id: str, role: str) -> Optional[Dict[str, Any]]:
+        """Promove/rebaixa um usuário. Retorna o usuário público atualizado."""
+        if role not in ("user", "admin"):
+            raise AuthError("Role inválida. Use 'user' ou 'admin'.", 400)
+        user = self._users.get(user_id)
+        if not user:
+            return None
+        user["role"] = role
+        self._save()
+        return {k: v for k, v in user.items() if k != "password_hash"}
+
+    def list_users(self) -> List[Dict[str, Any]]:
+        """Lista todos os usuários (sem hashes) — uso administrativo."""
+        return [{k: v for k, v in u.items() if k != "password_hash"} for u in self._users.values()]
+
     def user_dir(self, user_id: str) -> Path:
         """Diretório de dados do usuário (área privada)."""
         d = _data_dir(self.root) / "users" / user_id
@@ -173,6 +201,42 @@ class AuthStore:
 
     def events_file(self, user_id: str) -> Path:
         return self.user_dir(user_id) / "events.json"
+
+    # ------------------------------------------------------------------
+    # Login social (OAuth)
+    # ------------------------------------------------------------------
+    def oauth_login(self, provider: str, provider_id: str, email: str, name: str) -> Tuple[Dict[str, Any], str]:
+        """Encontra ou cria um usuário a partir do perfil OAuth e emite token.
+
+        O e-mail é a chave de vínculo: se já existir uma conta local com o mesmo
+        e-mail, o login social reutiliza essa conta (preservando eventuais
+        privilégios de admin). Caso contrário cria uma nova conta com role
+        "user" e marca a origem do provedor.
+        """
+        email = (email or "").strip().lower()
+        name = (name or "Novo usuário").strip()
+        user = next((u for u in self._users.values() if u.get("email") == email), None)
+        if not user:
+            user_id = "u_" + secrets.token_hex(4) + "_" + provider
+            while user_id in self._users:
+                user_id = "u_" + secrets.token_hex(4) + "_" + provider
+            user = {
+                "id": user_id,
+                "name": name,
+                "email": email,
+                "role": "user",
+                "oauth": provider,
+                "oauth_id": provider_id,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self._users[user_id] = user
+            self._save()
+        elif not user.get("oauth_id"):
+            user["oauth"] = provider
+            user["oauth_id"] = provider_id
+            self._save()
+        public = {k: v for k, v in user.items() if k != "password_hash"}
+        return public, self._issue_token(user["id"])
 
 
 def make_auth_store(root: Path) -> AuthStore:
