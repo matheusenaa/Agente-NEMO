@@ -1,4 +1,6 @@
-import type { CalendarEvent, FileNode, OpenFile } from "@/types/idea";
+import type {
+  AiConfigResponse, AiConversation, AiMemory, AiTask, CalendarEvent, FileNode, OpenFile, SearchWebResult,
+} from "@/types/idea";
 
 const BASE = "/api/nemo";
 
@@ -103,5 +105,58 @@ export const nemoApi = {
   },
   async deleteEvent(id: string): Promise<{ ok: boolean; deleted: string }> {
     return request(`/events/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  // ---- Central de IA (missão §39/45) ----
+  async aiConfig(): Promise<AiConfigResponse> {
+    return request("/ai/config");
+  },
+  async saveAiConfig(data: { default_provider?: string; default_model?: string }): Promise<{ ok: boolean }> {
+    return request("/ai/config", { method: "POST", body: JSON.stringify(data) });
+  },
+  async saveAiKey(provider: string, apiKey: string, model?: string): Promise<{
+    ok: boolean; masked: string; verified: boolean; test: { ok: boolean; message: string };
+  }> {
+    return request("/ai/keys", { method: "POST", body: JSON.stringify({ provider, api_key: apiKey, model }) });
+  },
+  async deleteAiKey(provider: string): Promise<{ ok: boolean; deleted: string }> {
+    return request(`/ai/keys/${encodeURIComponent(provider)}`, { method: "DELETE" });
+  },
+  async testAiKey(provider: string, apiKey?: string, model?: string): Promise<{
+    ok: boolean; message: string; provider: string; model?: string; detail?: string;
+  }> {
+    return request("/ai/test", { method: "POST", body: JSON.stringify({ provider, api_key: apiKey, model }) });
+  },
+  async searchWeb(query: string, limit = 6, agent = "pesquisador"): Promise<{
+    ok: boolean; query: string; provider: string; results: SearchWebResult[]; error?: string;
+  }> {
+    return request(`/ai/search?query=${encodeURIComponent(query)}&limit=${limit}&agent=${encodeURIComponent(agent)}`);
+  },
+
+  // ---- Memória dos agentes ----
+  async listMemories(agent?: string): Promise<{ ok: boolean; memories: AiMemory[] }> {
+    return request(`/ai/memories${agent ? `?agent=${encodeURIComponent(agent)}` : ""}`);
+  },
+  async saveMemory(agent: string, content: string, kind = "obs"): Promise<{ ok: boolean; memory: AiMemory }> {
+    return request("/ai/memories", { method: "POST", body: JSON.stringify({ agent, content, kind }) });
+  },
+  async deleteMemory(id: string): Promise<{ ok: boolean; deleted: string }> {
+    return request(`/ai/memories/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  // ---- Conversas persistidas ----
+  async listConversations(agent?: string): Promise<{ ok: boolean; conversations: AiConversation[] }> {
+    return request(`/conversations${agent ? `?agent=${encodeURIComponent(agent)}` : ""}`);
+  },
+
+  // ---- Tarefas persistidas (sync leve) ----
+  async listTasks(): Promise<{ ok: boolean; tasks: AiTask[] }> {
+    return request("/tasks");
+  },
+  async saveTask(task: Partial<AiTask>): Promise<{ ok: boolean; task: AiTask }> {
+    return request("/tasks", { method: "POST", body: JSON.stringify(task) });
+  },
+  async deleteTask(id: string): Promise<{ ok: boolean }> {
+    return request(`/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 };

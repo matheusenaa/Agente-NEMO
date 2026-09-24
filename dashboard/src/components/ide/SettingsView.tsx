@@ -1,6 +1,7 @@
 import { useIdeStore } from "@/store/useIdeStore";
 import { THEMES } from "@/data/themes";
 import { LAYOUTS } from "@/data/agents";
+import { AiSettingsCard } from "./AiSettingsCard";
 import type { Density, IdeConfig, LayoutId } from "@/types/idea";
 
 function resetAll() {
@@ -101,6 +102,8 @@ export function SettingsView() {
             </button>
           </div>
         </div>
+
+        <AiSettingsCard />
       </div>
     </section>
   );

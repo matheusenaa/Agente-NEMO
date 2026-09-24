@@ -322,6 +322,9 @@ body[data-density="spacious"]{--den-pad:14px;--den-gap:12px;--den-rad:14px;--fs:
 .dash-agent-s{font-size:10px;color:var(--text3)}
 .dash-logs{display:flex;flex-direction:column;gap:4px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:10px}
 .dash-log{display:flex;gap:8px;font-family:Consolas,monospace;font-size:calc(var(--fs) - 4px);line-height:1.6;color:var(--text2);align-items:baseline}
+.dash-ai{display:flex;flex-direction:column;gap:6px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:10px}
+.dash-ai-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2)}
+.dash-ai-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 .muted{opacity:.7}
 .clickable{cursor:pointer}
 

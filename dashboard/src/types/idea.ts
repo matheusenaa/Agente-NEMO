@@ -139,3 +139,76 @@ export interface IdeConfig {
   favAgents: string[];
   language: "pt-BR";
 }
+
+/** Camada de IA (provedores/configuração/exibição) — missão §39 */
+export interface AiProviderInfo {
+  id: string;
+  name: string;
+  icon: string;
+  configured: boolean;
+  models: string[];
+}
+
+export interface AiKeyInfo {
+  provider: string;
+  masked: string;
+  model: string;
+  verified: boolean;
+  updated_at?: string;
+}
+
+export interface AiSystemInfo {
+  providers: AiProviderInfo[];
+  default_provider: string;
+  web_search: string[];
+  store_backend: string;
+  encryption: boolean;
+}
+
+export interface AiConfigResponse {
+  ok: boolean;
+  system: AiSystemInfo;
+  user: {
+    settings: { default_provider?: string; default_model?: string; updated_at?: string };
+    keys: AiKeyInfo[];
+  };
+}
+
+export interface AiMemory {
+  id: string;
+  user_id?: string;
+  agent_id: string;
+  kind: string;
+  content: string;
+  created_at: number | string;
+}
+
+export interface AiConversation {
+  id: string;
+  agent_id: string;
+  title: string;
+  created_at?: number | string;
+  updated_at?: number | string;
+  message_count?: number;
+}
+
+export interface SearchWebResult {
+  title: string;
+  url: string;
+  snippet: string;
+  source: string;
+  date?: string;
+  query?: string;
+}
+
+/** Tarefa persistida (back/fallback local → Supabase) — missão §28 */
+export interface AiTask {
+  id: string;
+  title: string;
+  priority: string;
+  agent_id: string;
+  status: string;
+  created_at: number;
+  due_date?: number | null;
+  done_at?: number | null;
+}
