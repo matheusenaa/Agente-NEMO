@@ -1,0 +1,13 @@
+* text=auto
+*.py       eol=lf
+*.md       eol=lf
+*.json     eol=lf
+*.yaml     eol=lf
+*.yml      eol=lf
+*.toml     eol=lf
+*.cfg      eol=lf
+*.ini      eol=lf
+*.ts       eol=lf
+*.js       eol=lf
+*.html     eol=lf
+*.css      eol=lf
