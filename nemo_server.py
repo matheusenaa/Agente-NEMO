@@ -94,9 +94,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from openrouter_client import OpenRouterClient, CompletionResult
+from openrouter_client import OpenRouterClient
 from models_config import OPENROUTER_MODELS, get_model_by_id, get_all_models
 from auth import AuthError, AuthStore, make_auth_store
+from ai_providers import AIProviderService, PROVIDER_META
+from ai_keys import KeyStore, KeyStoreError, mask_key, looks_like_placeholder
+from web_search import WebSearchService, WebSearchError
+from data_store import make_data_store
 
 # ---------------------------------------------------------------------------
 # Constantes e helpers
@@ -113,6 +117,12 @@ DATA_DIR = ROOT / "_data"
 EVENTS_FILE = DATA_DIR / "events.json"
 
 AUTH_STORE: AuthStore = make_auth_store(ROOT)
+
+# Camada de IA multirprovedor + busca web + dados (Supabase ou fallback local)
+AI_SERVICE = AIProviderService()
+KEY_STORE = KeyStore(AUTH_STORE.secret)
+WEB_SEARCH_SERVICE = WebSearchService()
+DATA_STORE = make_data_store(ROOT, AUTH_STORE.secret)
 
 DEFAULT_HOST = os.getenv("HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.getenv("PORT", "8798"))
@@ -148,6 +158,88 @@ ICON_BY_CATEGORY: Dict[str, str] = {
     "strategy": "🎯",
     "technology": "🛠️",
 }
+
+# Ferramentas permitidas por agente (missão §22/23) — o backend NÃO deixa um
+# agente usar ferramenta fora da sua lista.
+AGENT_TOOLS: Dict[str, List[str]] = {
+    "nemo": ["orquestracao", "agentes", "tasks", "calendario", "search", "memory", "db"],
+    "jarvis": ["codigo", "terminal", "tasks", "search", "memory", "db"],
+    "analista": ["analise", "db", "memory", "search"],
+    "pesquisador": ["web_search", "analise", "memory"],
+    "redator": ["conteudo", "memory"],
+    "revisor": ["revisao", "memory"],
+    "designer": ["imagem", "design", "memory"],
+    "criador-video": ["roteiro", "video", "memory"],
+    "estrategista": ["estrategia", "memory", "search"],
+    "gestor-redes": ["social", "memory"],
+    "editor-publicador": ["conteudo", "publicacao", "memory"],
+    "seo": ["conteudo", "seo", "search", "memory"],
+}
+
+# Sinais de que a pergunta pede informação externa (missão §21: nada de busca
+# automática para perguntas simples/conhecimento estável).
+SEARCH_HINTS = [
+    "preço", "precos", "preco", "notícia", "noticia", "notícias", "noticias",
+    "cotação", "cotacao", "dólar", "dolar", "atual", "hoje", "2026", "2025",
+    "quanto", "resultado", "vasco", "empresa", "empresas", "quem", "quando",
+    "onde", "novo", "novos", "nova", "último", "ultimo", "última", "ultima",
+    "jogo", "jogos", "partida", "partidas", "pesquise", "pesquisar", "pesquisa",
+    "tabela", "ranking", "elenco", "campeonato", "lançamento", "lancamento",
+    "previsão", "previsao", "mercado", "ultrapassa", "tendência", "tendencia",
+]
+
+SEARCH_QUERY_ROOTS = re.compile(
+    r"^(me (busca|pesquisa|pesquise)|quero (saber|ver|uma pesquisa)|busca|pesquise|procure|investigue)",
+    re.IGNORECASE,
+)
+
+
+def _needs_search(message: str, tools: List[str]) -> bool:
+    """Missão §21: o agente decide quando buscar na web (e só com permissão)."""
+    if not (message or "").strip() or len(message.strip()) < 12:
+        return False
+    if "web_search" not in tools and "search" not in tools:
+        return False
+    msg = message.lower()
+    if SEARCH_QUERY_ROOTS.search(message):
+        return True
+    return any(hint in msg for hint in SEARCH_HINTS)
+
+
+def _search_block(sres: Dict[str, Any]) -> str:
+    results = sres.get("results", [])
+    lines = [
+        "INFORMAÇÕES ENCONTRADAS NA WEB (referência; cite as fontes):",
+        f"Mecanismo: {sres.get('provider', '')}",
+    ]
+    for i, r in enumerate(results[:6], 1):
+        lines.append(
+            f"{i}. {r.get('title', '') or '(sem título)'}\n   URL: {r.get('url', '')}\n   {r.get('snippet', '')[:320]}"
+        )
+    lines.append(
+        "Separe claramente seu CONHECIMENTO DO MODELO das informações acima. "
+        "Não invente fontes nem URLs que não apareceram aqui."
+    )
+    return "\n".join(lines)
+
+
+def _memory_block(user_id: str, agent_id: str) -> str:
+    """Memória permanente do agente para este usuário (missão §24/25)."""
+    try:
+        mems = DATA_STORE.list_memories(user_id, agent_id) or []
+    except Exception:
+        return ""
+    if not mems:
+        return ""
+    lines = ["MEMÓRIAS PERMANENTES SOBRE O USUÁRIO / TAREFAS ANTERIORES (use com contexto):"]
+    for m in mems[:6]:
+        kind = m.get("kind", "obs")
+        lines.append(f"- [{kind}] {str(m.get('content', ''))[:300]}")
+    return "\n".join(lines)
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
 
 # Comandos proibidos / destrutivos — exigem confirmacao explicita (force=true)
 DESTRUCTIVE_PATTERNS = [
@@ -480,6 +572,7 @@ class ChatRequest(BaseModel):
     messages: List[ChatMessage] = []
     message: str = ""
     model: Optional[str] = None
+    provider: Optional[str] = None
     temperature: float = 0.7
     max_tokens: int = 900
     context: str = ""
@@ -509,6 +602,49 @@ class EventRequest(BaseModel):
     createdAt: Optional[int] = None
 
 
+class AiSettingsRequest(BaseModel):
+    default_provider: Optional[str] = None
+    default_model: Optional[str] = None
+
+
+class AiKeyRequest(BaseModel):
+    provider: str = ""
+    api_key: str = ""
+    model: Optional[str] = None
+
+
+class AiTestRequest(BaseModel):
+    provider: str = ""
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+
+
+class MemoryRequest(BaseModel):
+    agent: str = "nemo"
+    content: str = ""
+    kind: str = "obs"
+
+
+class ConversationRequest(BaseModel):
+    agent: str = "nemo"
+    title: str = ""
+
+
+class MessageRequest(BaseModel):
+    role: str = "user"
+    content: str = ""
+    meta: Optional[Dict[str, Any]] = None
+
+
+class TaskRequest(BaseModel):
+    id: Optional[str] = None
+    title: str = ""
+    priority: str = "normal"
+    agentId: str = "nemo"
+    status: str = "pending"
+    dueDate: Optional[int] = None
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -516,6 +652,13 @@ class EventRequest(BaseModel):
 @app.get("/api/nemo/health")
 def health(request: Request) -> Dict[str, Any]:
     c = get_client()
+    ai = {
+        "providers_configured": [p for p in AI_SERVICE.provider_catalog() if p["configured"]],
+        "default_provider": AI_SERVICE.default_provider(),
+        "web_search": WEB_SEARCH_SERVICE.available_providers(),
+        "store_backend": DATA_STORE.name,
+        "encryption": KEY_STORE.available,
+    }
     return {
         "project": PROJECT_NAME,
         "version": VERSION,
@@ -526,6 +669,7 @@ def health(request: Request) -> Dict[str, Any]:
         "squads": len([d for d in SQUADS_DIR.iterdir() if d.is_dir() and not d.name.startswith((".", "_"))]) if SQUADS_DIR.is_dir() else 0,
         "squad_ws": False,
         "auth": True,
+        "ai": ai,
         "authenticated": bool(_current_user(request)),
     }
 
@@ -822,17 +966,43 @@ def delete_event(event_id: str, request: Request) -> Dict[str, Any]:
 
 @app.post("/api/nemo/chat")
 def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
-    _require_user(request)
+    user = _require_user(request)
     agent = _agent_persona(req.agent) or {
         "id": req.agent, "name": "Nemo", "title": "Assistente", "category": "assistant",
         "role": "Assistente pessoal.", "defaultModel": CATEGORY_MODEL_DEFAULT,
     }
-    model = req.model or agent.get("defaultModel") or CATEGORY_MODEL_DEFAULT
-    fallback_slugs: List[str] = []
-    mi = get_model_by_id(model)
-    if mi:
-        fallback_slugs = [s for s in [model] if False] + mi.fallback_slugs
-    system = _build_system_prompt(agent, req.context)
+
+    # --- Resolução de provedor/modelo (usuário > sistema) -------------------
+    settings: Dict[str, Any] = {}
+    try:
+        settings = DATA_STORE.get_ai_settings(user["id"]) or {}
+    except Exception:
+        settings = {}
+    provider = (req.provider or settings.get("default_provider") or AI_SERVICE.default_provider() or "openrouter")
+    model = req.model or settings.get("default_model") or agent.get("defaultModel") or CATEGORY_MODEL_DEFAULT
+
+    # --- Ferramentas (missão §22/23) e busca condicional (missão §21) --------
+    tools = AGENT_TOOLS.get(agent["id"], [])
+    search_extra = ""
+    if req.message and _needs_search(req.message, tools):
+        try:
+            sres = WEB_SEARCH_SERVICE.search(user["id"], req.message.strip()[:200], 5)
+            if sres.get("ok"):
+                search_extra = _search_block(sres)
+                try:
+                    DATA_STORE.save_search(user["id"], agent["id"], req.message, sres.get("provider", ""), sres.get("results", []))
+                except Exception:
+                    pass
+        except WebSearchError:
+            pass
+        except Exception:
+            pass
+
+    memory_extra = _memory_block(user["id"], agent["id"])
+
+    extras = [b for b in (req.context, memory_extra, search_extra) if b]
+    system = _build_system_prompt(agent, "\n\n".join(extras))
+
     messages: List[Dict[str, str]] = [{"role": "system", "content": system}]
     for m in req.messages[-12:]:
         if m.role in ("user", "assistant") and m.content:
@@ -842,74 +1012,102 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
     if len(messages) == 1:
         messages.append({"role": "user", "content": "Olá."})
 
+    configured_ids = [p["id"] for p in AI_SERVICE.provider_catalog() if p["configured"]]
+    user_key_providers: set = set()
+    try:
+        user_key_providers = {k.get("provider") for k in (DATA_STORE.list_api_keys(user["id"]) or [])}
+    except Exception:
+        user_key_providers = set()
+
+    api_key = None
+    if provider not in configured_ids:
+        try:
+            api_key = DATA_STORE.get_api_key(user["id"], provider)
+        except Exception:
+            api_key = None
+    if not AI_SERVICE.has_system_key(provider) and not api_key:
+        # Nenhuma chave para o provedor escolhido → tenta degradar graciosamente
+        # para qualquer provedor realmente configurado (missão §62).
+        if configured_ids:
+            provider = configured_ids[0]
+        elif user_key_providers:
+            provider = sorted(user_key_providers)[0]
+            try:
+                api_key = DATA_STORE.get_api_key(user["id"], provider)
+            except Exception:
+                api_key = None
+        else:
+            return _offline_no_provider(provider, req.agent, model)
+
+    fallback_chain = [p for p in configured_ids if p != provider][:2]
+    fallback_slugs: List[str] = []
+    mi = get_model_by_id(model)
+    if mi:
+        fallback_slugs = mi.fallback_slugs
+
     c = get_client()
     started = time.perf_counter()
-    if not c.has_valid_key_format():
-        return {
-            "ok": True,
-            "agent": req.agent,
-            "content": "⚠️ Minha chave de acesso ao OpenRouter não está configurada. "
-                       "Crie um arquivo `.env` a partir de `.env.example` com sua chave do OpenRouter para eu responder de verdade.\n\n"
-                       "Enquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro. 🐟",
-            "model_used": model,
-            "is_fallback": True,
-            "offline": True,
-            "latency_ms": 0,
-        }
-    result: CompletionResult = c.chat_completion(
+    result = AI_SERVICE.complete(
+        provider=provider,
         model=model,
         messages=messages,
         temperature=req.temperature,
         max_tokens=req.max_tokens,
-        fallback_slugs=fallback_slugs or None,
+        api_key=api_key,
+        fallback_providers=fallback_chain,
+        fallback_slugs=fallback_slugs,
     )
     latency_ms = round((time.perf_counter() - started) * 1000, 1)
+    model_used = result.model_used or model
+
     if result.success:
+        _persist_chat(user["id"], agent["id"], req.message, result.content)
+        _log_activity(user["id"], agent["id"], "chat", "ok", result.provider, result.model_used, result.latency_ms)
         return {
             "ok": True,
             "agent": req.agent,
             "content": result.content,
             "model_used": result.model_used,
+            "provider": result.provider,
             "is_fallback": result.is_fallback,
             "latency_ms": latency_ms,
             "prompt_tokens": result.prompt_tokens,
             "completion_tokens": result.completion_tokens,
             "total_tokens": result.total_tokens,
         }
+    _log_activity(user["id"], agent["id"], "chat", "error", result.provider, result.model_used, latency_ms)
     if _is_auth_error(result.error_message or ""):
-        # Chave presente mas inválida/expirada → resposta graciosa em PT-BR
-        # (o frontend exibe como mensagem normal, marcada como fallback offline).
+        # Chave presente mas inválida/expirada → resposta graciosa (PT-BR),
+        # sem expor o erro técnico ao usuário.
         return {
             "ok": True,
             "agent": req.agent,
             "content": (
-                "⚠️ Minha chave de acesso ao OpenRouter está **invalida ou expirada** "
-                "(HTTP 401), então não consigo chamar modelos de IA no momento. 🐟\n\n"
+                f"⚠️ A chave do **{_provider_name(result.provider)}** está inválida ou expirada, "
+                "então não consigo chamar modelos de IA no momento. 🐟\n\n"
                 "Para voltar a responder de verdade:\n"
-                "1. Abra o arquivo `.env` do projeto e troque `OPENROUTER_API_KEY` por uma chave nova "
-                "(crie em https://openrouter.ai/keys).\n"
-                "2. Reinicie o servidor (`python nemo_server.py`).\n\n"
-                "Enquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro. "
-                "💙 você me deu o diagnóstico?"),
-            "model_used": result.model_used or model,
+                "1. Vá em **Configurações → Inteligência Artificial** e atualize a chave, ou\n"
+                "2. Ajuste as credenciais no `.env` do projeto e reinicie o servidor.\n\n"
+                "Enquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro."),
+            "model_used": model_used,
+            "provider": result.provider,
             "is_fallback": True,
             "offline": True,
             "latency_ms": latency_ms,
         }
     if _is_connection_error(result.error_message or ""):
-        # OpenRouter inacessível (sem internet / firewall / rede bloqueada) →
-        # mesma resposta graciosa offline, sem expor erro cru de rede.
         return {
             "ok": True,
             "agent": req.agent,
             "content": (
-                "⚠️ Não consegui acessar o OpenRouter agora (rede indisponível ou bloqueada), "
-                "então não consigo chamar modelos de IA no momento. 🐟\n\n"
+                f"⚠️ Não consegui acessar o **{_provider_name(result.provider)}** agora "
+                "(rede indisponível ou bloqueada), então não consigo chamar modelos de IA no momento. 🐟\n\n"
                 "Para voltar a responder de verdade:\n"
-                "1. Verifique sua conexão com a internet (e se a rede/firewall permite `openrouter.ai`).\n"
-                "2. Confirme que `OPENROUTER_API_KEY` está válida no `.env` e reinicie o servidor.\n\n"
+                "1. Verifique sua conexão com a internet (e se a rede/firewall permite o provedor).\n"
+                "2. Confirme que a chave está válida nas Configurações de IA e tente novamente.\n\n"
                 "Enquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro."),
-            "model_used": result.model_used or model,
+            "model_used": model_used,
+            "provider": result.provider,
             "is_fallback": True,
             "offline": True,
             "latency_ms": latency_ms,
@@ -917,10 +1115,284 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
     return {
         "ok": False,
         "agent": req.agent,
-        "error": result.error_message or "Erro desconhecido ao chamar o modelo.",
-        "model_used": result.model_used,
+        "error": f"Não foi possível utilizar o {_provider_name(result.provider)} neste momento.",
+        "provider": result.provider,
+        "model_used": model_used,
         "latency_ms": latency_ms,
     }
+
+
+def _provider_name(provider: str) -> str:
+    return PROVIDER_META.get(provider or "", PROVIDER_META["openrouter"])["name"]
+
+
+def _offline_no_provider(provider: str, agent_id: str, model: str) -> Dict[str, Any]:
+    """Resposta graciosa quando nenhum provedor está configurado (missão §45/62)."""
+    _log_activity("?", agent_id, "chat", "no_provider", provider, model)
+    return {
+        "ok": True,
+        "agent": agent_id,
+        "content": (
+            "⚠️ Nenhum provedor de IA está configurado no momento, então não posso "
+            "responder de verdade. 🐟\n\n"
+            "Para ativar, configure pelo menos um deles:\n"
+            "- **Gemini** (https://aistudio.google.com) → `GEMINI_API_KEY` no `.env`\n"
+            "- **Groq** (https://console.groq.com) → `GROQ_API_KEY` no `.env`\n"
+            "- **OpenRouter** (https://openrouter.ai/keys) → `OPENROUTER_API_KEY` no `.env`\n\n"
+            "E em **Configurações → Inteligência Artificial** você pode usar sua própria chave.\n\n"
+            "Enquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro."),
+        "model_used": model,
+        "provider": provider,
+        "is_fallback": True,
+        "offline": True,
+        "latency_ms": 0,
+    }
+
+
+def _persist_chat(user_id: str, agent_id: str, user_message: str, reply: str) -> None:
+    """Persiste a conversa (Supabase ou local) — nunca quebra o chat."""
+    try:
+        convs = DATA_STORE.list_conversations(user_id, agent_id) or []
+        conv = convs[0] if convs else DATA_STORE.create_conversation(user_id, agent_id, (user_message or "")[:60])
+        if user_message:
+            DATA_STORE.append_message(user_id, conv["id"], "user", user_message[:12000], {})
+        if reply:
+            DATA_STORE.append_message(user_id, conv["id"], "assistant", reply[:20000], {})
+    except Exception:
+        pass
+
+
+def _log_activity(user_id: str, agent_id: str, operation: str, status: str,
+                  provider: str = "", model: str = "", latency: float = 0.0) -> None:
+    try:
+        DATA_STORE.log_activity(user_id, agent_id, operation, status, provider, model, latency)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Central de IA: config, chaves dos usuários, testes, busca, memória, conversas
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/nemo/ai/config")
+def ai_config(request: Request) -> Dict[str, Any]:
+    """Central de IA (missão §39/45): provedores do sistema + configuração e
+    chaves MASCARADAS do usuário. Nunca expõe a chave completa."""
+    user = _require_user(request)
+    settings: Dict[str, Any] = {}
+    keys: List[Dict[str, Any]] = []
+    try:
+        settings = DATA_STORE.get_ai_settings(user["id"]) or {}
+        keys = DATA_STORE.list_api_keys(user["id"]) or []
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "system": {
+            "providers": AI_SERVICE.provider_catalog(),
+            "default_provider": AI_SERVICE.default_provider(),
+            "web_search": WEB_SEARCH_SERVICE.available_providers(),
+            "store_backend": DATA_STORE.name,
+            "encryption": KEY_STORE.available,
+        },
+        "user": {"settings": settings, "keys": keys},
+    }
+
+
+@app.post("/api/nemo/ai/config")
+def ai_save_config(req: AiSettingsRequest, request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
+    if req.default_provider and req.default_provider not in PROVIDER_META:
+        raise HTTPException(status_code=400, detail="Provedor de IA desconhecido.")
+    DATA_STORE.save_ai_settings(user["id"], {
+        "default_provider": req.default_provider,
+        "default_model": req.default_model,
+    })
+    _log_activity(user["id"], "nemo", "ai_config", "ok", req.default_provider or "", req.default_model or "")
+    return {"ok": True}
+
+
+@app.post("/api/nemo/ai/keys")
+def ai_save_key(req: AiKeyRequest, request: Request) -> Dict[str, Any]:
+    """Salva a chave do usuário JÁ CRIPTOGRAFADA (missão §16-18). Testa a
+    conexão e devolve somente a máscara."""
+    user = _require_user(request)
+    provider = (req.provider or "").strip().lower()
+    if provider not in PROVIDER_META:
+        raise HTTPException(status_code=400, detail="Provedor de IA desconhecido.")
+    if not req.api_key or looks_like_placeholder(req.api_key):
+        raise HTTPException(status_code=400, detail="Informe uma chave válida.")
+    test = AI_SERVICE.test_key(provider, req.api_key, req.model)
+    try:
+        encrypted = KEY_STORE.encrypt(req.api_key)
+    except KeyStoreError as exc:
+        raise HTTPException(status_code=500, detail=exc.message)
+    DATA_STORE.save_api_key(
+        user["id"], provider, encrypted, mask_key(req.api_key),
+        model=req.model or "", verified=bool(test.get("ok")),
+    )
+    _log_activity(user["id"], "nemo", "save_key", "ok" if test.get("ok") else "auth_error", provider, req.model or "")
+    return {"ok": True, "masked": mask_key(req.api_key), "verified": bool(test.get("ok")), "test": test}
+
+
+@app.delete("/api/nemo/ai/keys/{provider}")
+def ai_delete_key(provider: str, request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
+    try:
+        ok = DATA_STORE.delete_api_key(user["id"], provider)
+    except Exception:
+        ok = False
+    _log_activity(user["id"], "nemo", "delete_key", "ok" if ok else "not_found", provider)
+    return {"ok": ok, "deleted": provider}
+
+
+@app.post("/api/nemo/ai/test")
+def ai_test(req: AiTestRequest, request: Request) -> Dict[str, Any]:
+    """Testa conexão com a chave informada OU a armazenada/do sistema. Nunca
+    exibe a chave no resultado (missão §19)."""
+    user = _require_user(request)
+    provider = (req.provider or "").strip().lower()
+    if provider not in PROVIDER_META:
+        raise HTTPException(status_code=400, detail="Provedor de IA desconhecido.")
+    api_key: Optional[str] = req.api_key
+    if not api_key:
+        try:
+            api_key = DATA_STORE.get_api_key(user["id"], provider) or None
+        except Exception:
+            api_key = None
+        if not api_key and not AI_SERVICE.has_system_key(provider):
+            return {"ok": False, "provider": provider, "message": "Nenhuma chave configurada para este provedor."}
+    try:
+        return AI_SERVICE.test_key(provider, api_key or "", req.model)
+    except Exception as exc:
+        return {"ok": False, "provider": provider, "message": "Não foi possível autenticar.", "detail": str(exc)[:120]}
+
+
+@app.get("/api/nemo/ai/search")
+def ai_search(request: Request, query: str = Query("", description="Termo de busca"),
+              limit: int = 6, agent: str = "pesquisador") -> Dict[str, Any]:
+    user = _require_user(request)
+    try:
+        res = WEB_SEARCH_SERVICE.search(user["id"], query, limit)
+        if res.get("ok"):
+            try:
+                DATA_STORE.save_search(user["id"], agent, query, res.get("provider", ""), res.get("results", []))
+            except Exception:
+                pass
+            _log_activity(user["id"], agent, "web_search", "ok", res.get("provider", ""))
+        return res
+    except WebSearchError as exc:
+        return {"ok": False, "query": query, "results": [], "error": exc.message}
+
+
+@app.get("/api/nemo/ai/memories")
+def ai_memories(request: Request, agent: str = "") -> Dict[str, Any]:
+    user = _require_user(request)
+    try:
+        return {"ok": True, "memories": DATA_STORE.list_memories(user["id"], agent or None)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/nemo/ai/memories")
+def ai_save_memory(req: MemoryRequest, request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
+    if not (req.content or "").strip():
+        raise HTTPException(status_code=400, detail="Memória vazia.")
+    mem = DATA_STORE.save_memory(user["id"], req.agent or "nemo", req.content.strip()[:2000], req.kind or "obs")
+    _log_activity(user["id"], req.agent or "nemo", "memory_save", "ok")
+    return {"ok": True, "memory": mem}
+
+
+@app.delete("/api/nemo/ai/memories/{memory_id}")
+def ai_delete_memory(memory_id: str, request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
+    ok = DATA_STORE.delete_memory(user["id"], memory_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Memória não encontrada.")
+    return {"ok": True, "deleted": memory_id}
+
+
+@app.get("/api/nemo/ai/activity")
+def ai_activity(request: Request, limit: int = 50) -> Dict[str, Any]:
+    user = _require_user(request)
+    try:
+        return {"ok": True, "activity": DATA_STORE.list_activity(user["id"], int(limit) or 50)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Conversas persistidas (Supabase ou local) — missão §26
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/nemo/conversations")
+def conversations_list(request: Request, agent: str = "") -> Dict[str, Any]:
+    user = _require_user(request)
+    try:
+        return {"ok": True, "conversations": DATA_STORE.list_conversations(user["id"], agent or None)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/nemo/conversations")
+def conversations_create(req: ConversationRequest, request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
+    conv = DATA_STORE.create_conversation(user["id"], req.agent or "nemo", req.title)
+    return {"ok": True, "conversation": conv}
+
+
+@app.get("/api/nemo/conversations/{conversation_id}/messages")
+def conversations_messages(conversation_id: str, request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
+    try:
+        return {"ok": True, "messages": DATA_STORE.list_messages(user["id"], conversation_id)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Tarefas persistidas (Supabase ou local) — missão §28 (estados da TASK)
+# ---------------------------------------------------------------------------
+
+VALID_TASK_STATUS = ("pending", "running", "done", "error", "cancelled")
+
+
+@app.get("/api/nemo/tasks")
+def tasks_list(request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
+    try:
+        return {"ok": True, "tasks": DATA_STORE.list_tasks(user["id"])}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/nemo/tasks")
+def tasks_save(req: TaskRequest, request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
+    task = {
+        "id": req.id or _gen_event_id(),
+        "title": (req.title or "").strip() or "Tarefa sem título",
+        "priority": req.priority if req.priority in ("urgente", "importante", "normal", "baixa") else "normal",
+        "agent_id": req.agentId or "nemo",
+        "status": req.status if req.status in VALID_TASK_STATUS else "pending",
+        "created_at": _now_ms(),
+        "due_date": req.dueDate,
+        "done_at": _now_ms() if req.status == "done" else None,
+    }
+    DATA_STORE.save_task(user["id"], task)
+    return {"ok": True, "task": task}
+
+
+@app.delete("/api/nemo/tasks/{task_id}")
+def tasks_delete(task_id: str, request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
+    ok = DATA_STORE.delete_task(user["id"], task_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada.")
+    return {"ok": True, "deleted": task_id}
 
 
 def _is_auth_error(message: str) -> bool:
