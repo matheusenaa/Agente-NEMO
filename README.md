@@ -15,6 +15,11 @@ Ele orquestra uma equipe especializada de agentes (cada um com personalidade, mo
 ```
 NEMO/
 ├── nemo_server.py              # Backend FastAPI — chat, arquivos, terminal, snapshot e dashboard
+├── ai_providers.py             # Camada abstrata de IA: Gemini, Groq, OpenAI, OpenRouter
+├── ai_keys.py                  # Cofre criptografado das API Keys dos usuários (Fernet)
+├── web_search.py               # Busca na web: DuckDuckGo (padrão), Tavily e Brave
+├── data_store.py               # Camada de dados: Supabase ou fallback JSON local
+├── supabase/migrations/        # SQL do schema + RLS (habilitar NEMO em nuvem)
 ├── openrouter_client.py        # Cliente OpenRouter (chat, modelos, fallbacks)
 ├── models_config.py            # Configuração dos modelos com fallbacks
 ├── start_nemo.py               # Launcher universal (Windows/Linux/Antigravity) + diagnóstico
@@ -30,6 +35,10 @@ NEMO/
 ├── start_nemo.bat               # Produção 1-clique (backend + dashboard compilado)
 ├── start_nemo_dev.bat           # Dev: backend (8798) + Vite HMR (5173)
 ├── test_client_unit.py          # Testes unitários do backend
+├── test_ai_providers.py         # Testes da camada de IA
+├── test_ai_keys.py              # Testes do cofre de chaves
+├── test_web_search.py           # Testes da busca web
+├── test_data_store.py           # Testes da camada de dados
 └── dashboard/                   # Frontend — a IDE NEMO
     ├── index.html
     ├── vite.config.ts           # alias @ + proxy /api/nemo
@@ -43,7 +52,8 @@ NEMO/
         ├── components/ide/      # AppShell, TopBar, AgentSidebar, ChatView,
         │                       #   CodeEditor, FileExplorer, TerminalView,
         │                       #   TasksView, HistoryView, SettingsView,
-        │                       #   ContextPanel, NotificationsLayer, OfficeView
+        │                       #   ContextPanel, NotificationsLayer, OfficeView,
+        │                       #   AiSettingsCard (Central de IA)
         ├── lib/                 # renderMarkdown, syntax highlighting, id
         └── styles/              # globals.css, themes.css, ide.css
 ```
@@ -71,16 +81,17 @@ cd dashboard; npm install; cd ..
 ### 1. Backend (Python)
 
 ```powershell
-# chave da API (opcional — sem ela, respostas ficam em modo offline)
+# chaves de IA (opcional — sem elas, respostas ficam em modo offline)
 Copy-Item .env.example .env
-# edite o .env com sua OPENROUTER_API_KEY
+# edite o .env com pelo menos uma das chaves: GEMINI_API_KEY, GROQ_API_KEY,
+# OPENAI_API_KEY ou OPENROUTER_API_KEY (+ opcional NEMO_AI_PROVIDER)
 
 python nemo_server.py
 ```
 
-O servidor sobe em `http://127.0.0.1:8798` e expõe: `/api/nemo/health`, `/api/nemo/chat`, `/api/nemo/files`, `/api/nemo/file`, `/api/nemo/file/save`, `/api/nemo/terminal`, `/api/nemo/models`, `/api/nemo/snapshot`, `/api/nemo/auth`, `/api/nemo/context`, `/api/nemo/agents` — e, em produção, também serve o dashboard compilado na raiz `/`.
+O servidor sobe em `http://127.0.0.1:8798` e expõe: `/api/nemo/health`, `/api/nemo/chat`, `/api/nemo/files`, `/api/nemo/file`, `/api/nemo/file/save`, `/api/nemo/terminal`, `/api/nemo/models`, `/api/nemo/snapshot`, `/api/nemo/auth`, `/api/nemo/context`, `/api/nemo/agents`, `/api/nemo/ai/config|keys|test|search|memories`, `/api/nemo/conversations`, `/api/nemo/tasks` — e, em produção, também serve o dashboard compilado na raiz `/`.
 
-> **Sem `OPENROUTER_API_KEY`**: o chat responde com um aviso amigável e funcionam todas as telas da IDE (arquivos, terminal, tasks, escritório). **Com chave vencida/inválida (HTTP 401)**: o NEMO explica que precisa de uma chave nova. Com chave válida, conversa de verdade via OpenRouter.
+> **Sem nenhuma chave de IA**: o chat responde com um aviso amigável e funcionam todas as telas da IDE (arquivos, terminal, tasks, escritório). **Com chave vencida/inválida (HTTP 401)**: o NEMO explica que precisa de uma chave nova.
 
 ### 2. Dashboard (IDE)
 
@@ -206,11 +217,57 @@ Cada agente tem **modelo padrão + fallbacks** (ex.: `openai/gpt-4o` → `anthro
 
 ---
 
+## 🤖 Central de IA (multi-provedor)
+
+O backend fala com **uma camada abstrata** (`ai_providers.py`) — o restante do sistema nunca acessa um provedor diretamente:
+
+| Provedor | Var. de ambiente | Status |
+|----------|------------------|--------|
+| ✨ Google Gemini | `GEMINI_API_KEY` | REST direto (sem SDK) |
+| ⚡ Groq | `GROQ_API_KEY` | OpenAI-compatível |
+| 🧠 OpenAI | `OPENAI_API_KEY` | OpenAI-compatível |
+| 🌐 OpenRouter | `OPENROUTER_API_KEY` | via `openrouter_client.py` |
+
+- **Resolução**: Configurações do usuário (`Configurações → Inteligência Artificial`) > `NEMO_AI_PROVIDER` > modelo padrão do agente.
+- **Fallbacks**: se o provedor escolhido não tiver chave, degrada para o primeiro configurado (máximo **3 tentativas**, missão §33). Sem nenhuma chave → resposta graciosa offline.
+- **API Keys dos usuários**: guardadas **criptografadas** (Fernet derivado de `AUTH_SECRET`, `ai_keys.py`); o frontend só vê a máscara `****...abcd`; nunca vão para logs/Git.
+- **Busca na web**: `web_search.py` usa DuckDuckGo (sem chave) por padrão, com Tavily (`TAVILY_API_KEY`) e Brave (`BRAVE_API_KEY`) quando configurados. A busca é condicional (só quando o agente tem a ferramenta e o pedido indica busca externa) e tem rate-limit por usuário (`WEB_SEARCH_RATE_LIMIT`, padrão 10/min).
+- **Memória + conversas + tarefas**: persistidas por usuário via `data_store.py`.
+
+### Configurando no `.env`
+
+```ini
+# Pelo menos uma destas desbloqueia o chat real:
+GEMINI_API_KEY=
+GROQ_API_KEY=
+OPENAI_API_KEY=
+OPENROUTER_API_KEY=
+NEMO_AI_PROVIDER=gemini        # opcional: provedor padrão do sistema
+
+# Busca na web (opcionais; DDG funciona sem chave):
+TAVILY_API_KEY=
+BRAVE_API_KEY=
+WEB_SEARCH_RATE_LIMIT=10
+
+# Supabase (opcional — sem isto, usa JSON local em _data/): veja supabase/README.md
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+```
+
+> **AUTH_SECRET** passa a ter papel duplo: assina tokens de sessão **e** deriva a chave Fernet das API Keys. Guarde uma valor forte e estável (trocar o valor invalida as chaves já armazenadas).
+
+### Supabase (opcional)
+
+Com `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`, conversas, memórias, chaves, preferências, tarefas, atividade e buscas passam a viver no PostgreSQL (com **RLS** exigindo `auth.uid() = user_id`). Sem isso, o NEMO continua 100% local em `_data/users/<id>/*.json`. Passo a passo em [`supabase/README.md`](supabase/README.md).
+
+---
+
 ## 🗄️ Persistência
 
 - **Interface/estado**: `localStorage` no navegador (chave `nemo-ide`) — temas, tasks, histórico, abas abertas.
 - **Squads**: arquivos `yaml`/`csv` em `squads/` + `state.json` por squad (lido pelo snapshot).
-- **Sem banco externo**: o projeto é intencionalmente self-contained (nenhuma dependência de SQL/NoSQL) — escolha que simplifica deploy e instalação em qualquer máquina.
+- **Dados de usuário (conversas, memórias, chaves, tarefas, atividade)**: via `data_store.py` → **Supabase** quando configurado, senão **JSON local self-contained** em `_data/users/<id>/`. Chaves de IA são criptografadas antes de persistir.
 
 ---
 
@@ -218,9 +275,9 @@ Cada agente tem **modelo padrão + fallbacks** (ex.: `openai/gpt-4o` → `anthro
 
 ```powershell
 # Backend (unit)
-python -m pytest test_client_unit.py -q
+python -m unittest test_client_unit test_ai_providers test_ai_keys test_web_search test_data_store -v
 # ou
-python test_client_unit.py
+python -m pytest test_client_unit.py -q
 
 # Frontend
 cd dashboard

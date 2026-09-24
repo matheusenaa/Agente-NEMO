@@ -3,6 +3,7 @@
 **Data original:** 2026-09-18  
 **Atualização (missão 2 — interface+estabilidade):** 2026-09-19  
 **Atualização (missão 6 — escritório estável, perfis USER/ADMIN e login Google/OAuth):** 2026-09-24  
+**Atualização (missão 7 — integração Supabase + Gemini + Groq + IA do usuário):** 2026-09-24  
 **Projeto:** NEMO IDE / Open Squad Dashboard  
 **Repositório:** https://github.com/matheusenaa/Agente-NEMO (público, branch `main`)  
 **Executável:** `dist/NEMO_IDE/NEMO_IDE.exe` (23 MB, PyInstaller)  
@@ -521,3 +522,47 @@ O **NEMO IDE / Open Squad Dashboard** está **completo, testado e empacotado** c
 - **Executável standalone** (23 MB) **corrigido** — volta a enxergar agentes/squads/dashboard no modo frozen
 
 > **Pronto para uso e distribuição.** Basta copiar `dist/NEMO_IDE/`, configurar `.env` com uma chave OpenRouter nova e rodar `NEMO_IDE.exe`.
+
+---
+
+## 15. ANEXO — Missão 7: Integração Supabase + Gemini + Groq + IA do Usuário
+
+**Data:** 2026-09-24 · **Pendências do usuário:** ainda **não há** projeto Supabase, chave Gemini nem chave Groq → conforme a missão §60, **nenhuma credencial foi inventada**; tudo foi construído configurável e degrada graciosamente.
+
+### 15.1 Entregas
+
+| Entregável | Arquivo | Evidência |
+|-----------|---------|-----------|
+| Camada abstrata de IA (Gemini, Groq, OpenAI, OpenRouter) | `ai_providers.py` (novo) | `AIProviderService` + `CompletionResult`; catálogo `PROVIDER_META`; fallbacks limitados em `MAX_FALLBACKS=3` (missão §33) |
+| Cofre de API Keys do usuário | `ai_keys.py` (novo) | **Fernet** (AES-128-CBC) derivado de `AUTH_SECRET`; só máscara no frontend; `mask_key`/`looks_like_placeholder` |
+| Busca na web multi-provedor | `web_search.py` (novo) | DuckDuckGo **sem chave** (padrão), Tavily/Brave se configurados; rate-limit por usuário; busca **condicional** (`_needs_search`) |
+| Camada de dados (Supabase ↔ local) | `data_store.py` (novo) | `DataStore` → `SupabaseStore` (service role, `user_id` em toda query) ou `LocalStore` (JSON `_data/users/<id>/`) |
+| Schema + RLS Supabase | `supabase/migrations/001_schema_init.sql` (novo) | 12 tabelas (conversations, messages, agent_memories, tasks, ai_providers, user_ai_keys, ai_settings, web_searches, activity_logs, …), policies exigindo `auth.uid() = user_id`, trigger de profile |
+| Backend multi-provedor | `nemo_server.py` | chat reescrito (provedor resolução usuário>sistema>agente); `/api/nemo/ai/config`, `/api/nemo/ai/keys` (POST/DELETE), `/api/nemo/ai/test`, `/api/nemo/ai/search`, `/api/nemo/ai/memories`; `/api/nemo/conversations`; `/api/nemo/tasks`; health com bloco `ai` |
+| UI Central de IA | `dashboard/src/components/ide/AiSettingsCard.tsx` (novo) + `SettingsView.tsx` + `DashboardView.tsx` + `api/nemo.ts` + tipos | provedor/modelo padrão, chave mascarada com salvar/testar/remover, status backend/store/criptografia; card "IA ativa" no Painel |
+| Dependências/env | `requirements.txt` (+`cryptography`, +`supabase`); `.env.example` (provedores, busca, Supabase) | instaladas e ativas (encryption=True) |
+| Testes | `test_ai_providers.py`, `test_ai_keys.py`, `test_web_search.py`, `test_data_store.py` (novos) + `test_client_unit.py` (atualizado) | **49 testes, todos OK** (1 skip: "sem cryptography" — biblioteca instalada) |
+| Docs | `README.md`, `supabase/README.md`, este anexo | passo a passo de ativação |
+
+### 15.2 Smoke test real (TestClient, sem credenciais inventadas)
+
+- `GET /api/nemo/ai/config` → 200 com `providers` (4), `web_search: [duckduckgo]`, `store_backend: local`, `encryption: true`
+- `POST /api/nemo/ai/config` (default_provider gemini) → 200
+- `POST /api/nemo/ai/keys` (chave de teste sintética) → 200, **máscara `****…7890`**, `verified:false`, teste real contra Gemini respondeu 400 graciosamente (nenhuma quebra); arquivo `ai_keys.json` **não contém a chave em texto puro**
+- `/api/nemo/ai/memories` e `/api/nemo/tasks` → 200 listagem/inserção
+
+### 15.3 Decisões (missão §44 e segurança)
+
+1. Backend filtra **tudo** por `user_id` mesmo com Supabase (frontend não confiável) + RLS no banco.
+2. Chaves criptografadas em repouso **antes** da camada de dados; nunca em logs/Git/response payload (só máscara).
+3. Sem nenhuma chave → chat responde **offline gracioso** orientando configuração (`Configurações → Inteligência Artificial` ou `.env`), preservando todo o resto da IDE.
+4. Fallback entre provedores limitado a 3 tentativas; busca web condicional e com rate-limit.
+
+### 15.4 Pendências (requerem credenciais/ambiente do usuário)
+
+1. Criar **projeto Supabase** (guia em `supabase/README.md`) e preencher `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` → `store_backend` muda para `supabase`.
+2. Opcional: `GEMINI_API_KEY` / `GROQ_API_KEY` no `.env` (ou pela UI, criptografada por usuário) → chat multi-provedor real.
+3. Validar fluxo completo em ambiente com internet (esta rede INEP bloqueia vários hosts externos).
+4. Revogar/expor a chave OpenRouter antiga do `.env` quando convenient (ela **não** está em Git).
+
+---
