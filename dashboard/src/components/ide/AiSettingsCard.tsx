@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { nemoApi } from "@/api/nemo";
 import { useIdeStore } from "@/store/useIdeStore";
+import { AGENT_ROSTER } from "@/data/agents";
 import type { AiConfigResponse, AiProviderInfo } from "@/types/idea";
 
 const inputStyle: React.CSSProperties = {
@@ -28,6 +29,11 @@ export function AiSettingsCard() {
   const [keys, setKeys] = useState<Record<string, { key: string; model: string }>>({});
   const [testResult, setTestResult] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState("");
+
+  // Configuração por agente (missão §40)
+  const [ovAgent, setOvAgent] = useState("nemo");
+  const [ovProvider, setOvProvider] = useState("");
+  const [ovModel, setOvModel] = useState("");
 
   useEffect(() => {
     void load();
@@ -116,6 +122,41 @@ export function AiSettingsCard() {
     }
   }
 
+  async function saveOverride() {
+    if (!ovAgent || (!ovProvider && !ovModel)) {
+      notify({ icon: "🤖", text: "Escolha um agente e informe provedor ou modelo", tone: "warn" });
+      return;
+    }
+    setBusy("override");
+    try {
+      await nemoApi.saveAiConfig({
+        agent_overrides: { [ovAgent]: { provider: ovProvider || undefined, model: ovModel || undefined } },
+      });
+      addLog({ tone: "ok", text: `IA do agente ${ovAgent}: ${ovProvider || "padrão"} / ${ovModel || "padrão"}` });
+      notify({ icon: "🤖", text: `Configuração do agente ${ovAgent} salva`, tone: "ok" });
+      setOvProvider("");
+      setOvModel("");
+      await load();
+    } catch {
+      notify({ icon: "🤖", text: "Falha ao salvar configuração do agente", tone: "error" });
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function removeOverride(agentId: string) {
+    setBusy(`del-ov-${agentId}`);
+    try {
+      await nemoApi.saveAiConfig({ agent_overrides: { [agentId]: {} } });
+      addLog({ tone: "warn", text: `Override do agente ${agentId} removido` });
+      await load();
+    } catch {
+      notify({ icon: "🤖", text: "Falha ao remover override do agente", tone: "error" });
+    } finally {
+      setBusy("");
+    }
+  }
+
   if (loading && !data) {
     return (
       <div className="set-card">
@@ -129,6 +170,7 @@ export function AiSettingsCard() {
   const storedKeys: Record<string, string> = {};
   for (const k of data?.user.keys ?? []) storedKeys[k.provider] = k.masked;
   const backend = data?.system.store_backend ?? "local";
+  const overridesList = Object.entries((data?.user.settings.agent_overrides ?? {}) as Record<string, { provider?: string; model?: string }>);
 
   return (
     <div className="set-card">
@@ -214,6 +256,50 @@ export function AiSettingsCard() {
             </div>
           );
         })}
+      </div>
+
+      <div style={{ marginTop: 10 }}>
+        <h4 style={{ fontSize: "calc(var(--fs) - 1px)", margin: "8px 0 6px", color: "var(--text2)" }}>Configuração por agente (opcional)</h4>
+        <div className="set-row" style={{ flexWrap: "wrap" }}>
+          <select value={ovAgent} onChange={(e) => setOvAgent(e.target.value)} style={{ ...inputStyle, flex: "0 0 170px" }}>
+            {AGENT_ROSTER.map((a) => (
+              <option key={a.id} value={a.id}>{a.icon} {a.name}</option>
+            ))}
+          </select>
+          <select value={ovProvider} onChange={(e) => setOvProvider(e.target.value)} style={{ ...inputStyle, flex: "0 0 170px" }}>
+            <option value="">Provedor padrão do usuário</option>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>{p.icon} {p.name}</option>
+            ))}
+          </select>
+          <input
+            type="text"
+            placeholder="Modelo (ex.: gemini-2.5-flash)"
+            value={ovModel}
+            style={{ ...inputStyle, flex: "0 0 190px" }}
+            onChange={(e) => setOvModel(e.target.value)}
+          />
+          <button className="tool-btn primary" disabled={busy === "override"} onClick={saveOverride}>💾 Salvar p/ agente</button>
+        </div>
+        {overridesList.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+            {overridesList.map(([agentId, spec]) => (
+              <span key={agentId} className="seg-btn" style={{ padding: "4px 10px", display: "inline-flex", gap: 8, alignItems: "center" }}>
+                {AGENT_ROSTER.find((a) => a.id === agentId)?.icon ?? "🤖"} {AGENT_ROSTER.find((a) => a.id === agentId)?.name ?? agentId}:{" "}
+                <b style={{ fontWeight: 600 }}>{spec.provider ?? "padrão"}</b> / {spec.model ?? "padrão"}
+                <button
+                  className="tool-btn"
+                  title="Remover override"
+                  style={{ padding: "0 4px", lineHeight: 1 }}
+                  disabled={busy === `del-ov-${agentId}`}
+                  onClick={() => removeOverride(agentId)}
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       <div style={{ marginTop: 8, fontSize: 12, color: "var(--text3)" }}>

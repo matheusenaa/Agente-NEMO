@@ -82,7 +82,8 @@ class DataStore:
 
     # ---- atividade / logs (sem secrets) ----
     def log_activity(self, user_id: str, agent_id: str, operation: str, status: str,
-                     provider: str = "", model: str = "", latency_ms: float = 0.0) -> None: ...
+                     provider: str = "", model: str = "", latency_ms: float = 0.0,
+                     prompt_tokens: int = 0, completion_tokens: int = 0, total_tokens: int = 0) -> None: ...
     def list_activity(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]: ...
 
     # ---- busca web persistida ----
@@ -273,11 +274,14 @@ class LocalStore(DataStore):
 
     # ---- atividade ----
     def log_activity(self, user_id: str, agent_id: str, operation: str, status: str,
-                     provider: str = "", model: str = "", latency_ms: float = 0.0) -> None:
+                     provider: str = "", model: str = "", latency_ms: float = 0.0,
+                     prompt_tokens: int = 0, completion_tokens: int = 0, total_tokens: int = 0) -> None:
         acts = _read_json(self._f(user_id, "activity.json"), [])
         acts.insert(0, {
             "agent_id": agent_id, "operation": operation, "status": status,
             "provider": provider, "model": model, "latency_ms": latency_ms,
+            "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
             "created_at": _now_iso(),
         })
         _write_json(self._f(user_id, "activity.json"), acts[:500])
@@ -436,10 +440,13 @@ class SupabaseStore(DataStore):
 
     # ---- atividade ----
     def log_activity(self, user_id: str, agent_id: str, operation: str, status: str,
-                     provider: str = "", model: str = "", latency_ms: float = 0.0) -> None:
+                     provider: str = "", model: str = "", latency_ms: float = 0.0,
+                     prompt_tokens: int = 0, completion_tokens: int = 0, total_tokens: int = 0) -> None:
         self._t("activity_logs").insert({
             "user_id": user_id, "agent_id": agent_id, "operation": operation, "status": status,
-            "provider": provider, "model": model, "latency_ms": latency_ms, "created_at": _now_iso(),
+            "provider": provider, "model": model, "latency_ms": latency_ms,
+            "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens, "created_at": _now_iso(),
         }).execute()
 
     def list_activity(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:

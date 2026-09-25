@@ -169,7 +169,12 @@ export interface AiConfigResponse {
   ok: boolean;
   system: AiSystemInfo;
   user: {
-    settings: { default_provider?: string; default_model?: string; updated_at?: string };
+    settings: {
+      default_provider?: string;
+      default_model?: string;
+      updated_at?: string;
+      agent_overrides?: Record<string, { provider?: string; model?: string }>;
+    };
     keys: AiKeyInfo[];
   };
 }

@@ -55,6 +55,7 @@ import secrets
 import shlex
 import subprocess
 import sys
+import threading
 import time
 import unicodedata
 from datetime import datetime
@@ -123,6 +124,34 @@ AI_SERVICE = AIProviderService()
 KEY_STORE = KeyStore(AUTH_STORE.secret)
 WEB_SEARCH_SERVICE = WebSearchService()
 DATA_STORE = make_data_store(ROOT, AUTH_STORE.secret)
+
+
+# Rate limit por usuário (missão §35) — proteção contra consumo ilimitado.
+try:
+    AI_REQUEST_LIMIT_PER_MINUTE = max(1, int(os.getenv("NEMO_AI_RATE_LIMIT", "30")))
+except Exception:
+    AI_REQUEST_LIMIT_PER_MINUTE = 30
+
+
+class _SlidingWindowRateLimit:
+    def __init__(self, limit: int):
+        self.limit = limit
+        self._lock = threading.Lock()
+        self._hits: Dict[str, List[float]] = {}
+
+    def allow(self, key: str) -> bool:
+        now = time.time()
+        with self._lock:
+            recent = [t for t in self._hits.get(key, []) if now - t < 60]
+            if len(recent) >= self.limit:
+                self._hits[key] = recent
+                return False
+            recent.append(now)
+            self._hits[key] = recent
+            return True
+
+
+AI_RATE_LIMITER = _SlidingWindowRateLimit(AI_REQUEST_LIMIT_PER_MINUTE)
 
 DEFAULT_HOST = os.getenv("HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.getenv("PORT", "8798"))
@@ -602,9 +631,16 @@ class EventRequest(BaseModel):
     createdAt: Optional[int] = None
 
 
+class AgentAiOverride(BaseModel):
+    """Configuração de IA para um agente específico (missão §40)."""
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
 class AiSettingsRequest(BaseModel):
     default_provider: Optional[str] = None
     default_model: Optional[str] = None
+    agent_overrides: Optional[Dict[str, AgentAiOverride]] = None
 
 
 class AiKeyRequest(BaseModel):
@@ -967,19 +1003,38 @@ def delete_event(event_id: str, request: Request) -> Dict[str, Any]:
 @app.post("/api/nemo/chat")
 def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
     user = _require_user(request)
+    if not AI_RATE_LIMITER.allow(user["id"]):
+        return {
+            "ok": True,
+            "agent": req.agent,
+            "content": (
+                f"⏳ Você atingiu o limite de **{AI_REQUEST_LIMIT_PER_MINUTE}** requisições de IA "
+                "por minuto. Aguarde um instante e tente de novo.\n\n"
+                "O limite é ajustável em `.env` → `NEMO_AI_RATE_LIMIT`."),
+            "offline": True,
+            "rate_limited": True,
+            "latency_ms": 0,
+        }
     agent = _agent_persona(req.agent) or {
         "id": req.agent, "name": "Nemo", "title": "Assistente", "category": "assistant",
         "role": "Assistente pessoal.", "defaultModel": CATEGORY_MODEL_DEFAULT,
     }
 
-    # --- Resolução de provedor/modelo (usuário > sistema) -------------------
+    # --- Resolução de provedor/modelo (requisição > agente > usuário > sistema) --
     settings: Dict[str, Any] = {}
     try:
         settings = DATA_STORE.get_ai_settings(user["id"]) or {}
     except Exception:
         settings = {}
-    provider = (req.provider or settings.get("default_provider") or AI_SERVICE.default_provider() or "openrouter")
-    model = req.model or settings.get("default_model") or agent.get("defaultModel") or CATEGORY_MODEL_DEFAULT
+    agent_override: Dict[str, Any] = (settings.get("agent_overrides") or {}).get(req.agent) or {}
+    provider = (req.provider
+                or agent_override.get("provider")
+                or settings.get("default_provider")
+                or AI_SERVICE.default_provider() or "openrouter")
+    model = (req.model
+             or agent_override.get("model")
+             or settings.get("default_model")
+             or agent.get("defaultModel") or CATEGORY_MODEL_DEFAULT)
 
     # --- Ferramentas (missão §22/23) e busca condicional (missão §21) --------
     tools = AGENT_TOOLS.get(agent["id"], [])
@@ -1062,7 +1117,8 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
 
     if result.success:
         _persist_chat(user["id"], agent["id"], req.message, result.content)
-        _log_activity(user["id"], agent["id"], "chat", "ok", result.provider, result.model_used, result.latency_ms)
+        _log_activity(user["id"], agent["id"], "chat", "ok", result.provider, result.model_used, result.latency_ms,
+                      result.prompt_tokens, result.completion_tokens, result.total_tokens)
         return {
             "ok": True,
             "agent": req.agent,
@@ -1075,7 +1131,8 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
             "completion_tokens": result.completion_tokens,
             "total_tokens": result.total_tokens,
         }
-    _log_activity(user["id"], agent["id"], "chat", "error", result.provider, result.model_used, latency_ms)
+    _log_activity(user["id"], agent["id"], "chat", "error", result.provider, result.model_used, latency_ms,
+                  result.prompt_tokens, result.completion_tokens, result.total_tokens)
     if _is_auth_error(result.error_message or ""):
         # Chave presente mas inválida/expirada → resposta graciosa (PT-BR),
         # sem expor o erro técnico ao usuário.
@@ -1163,9 +1220,11 @@ def _persist_chat(user_id: str, agent_id: str, user_message: str, reply: str) ->
 
 
 def _log_activity(user_id: str, agent_id: str, operation: str, status: str,
-                  provider: str = "", model: str = "", latency: float = 0.0) -> None:
+                  provider: str = "", model: str = "", latency: float = 0.0,
+                  prompt_tokens: int = 0, completion_tokens: int = 0, total_tokens: int = 0) -> None:
     try:
-        DATA_STORE.log_activity(user_id, agent_id, operation, status, provider, model, latency)
+        DATA_STORE.log_activity(user_id, agent_id, operation, status, provider, model, latency,
+                                prompt_tokens, completion_tokens, total_tokens)
     except Exception:
         pass
 
@@ -1205,10 +1264,27 @@ def ai_save_config(req: AiSettingsRequest, request: Request) -> Dict[str, Any]:
     user = _require_user(request)
     if req.default_provider and req.default_provider not in PROVIDER_META:
         raise HTTPException(status_code=400, detail="Provedor de IA desconhecido.")
-    DATA_STORE.save_ai_settings(user["id"], {
+    payload: Dict[str, Any] = {
         "default_provider": req.default_provider,
         "default_model": req.default_model,
-    })
+    }
+    if req.agent_overrides is not None:
+        # Mescla (não destrói) os overrides já salvos de outros agentes.
+        merged: Dict[str, Dict[str, Any]] = {}
+        try:
+            merged = dict((DATA_STORE.get_ai_settings(user["id"]) or {}).get("agent_overrides") or {})
+        except Exception:
+            merged = {}
+        for agent_id, spec in req.agent_overrides.items():
+            vals = {k: v for k, v in spec.model_dump().items() if v is not None}
+            if not vals:
+                merged.pop(agent_id, None)
+                continue
+            cur = dict(merged.get(agent_id) or {})
+            cur.update(vals)
+            merged[agent_id] = cur
+        payload["agent_overrides"] = merged
+    DATA_STORE.save_ai_settings(user["id"], payload)
     _log_activity(user["id"], "nemo", "ai_config", "ok", req.default_provider or "", req.default_model or "")
     return {"ok": True}
 

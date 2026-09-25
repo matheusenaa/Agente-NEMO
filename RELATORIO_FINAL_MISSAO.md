@@ -4,6 +4,7 @@
 **Atualização (missão 2 — interface+estabilidade):** 2026-09-19  
 **Atualização (missão 6 — escritório estável, perfis USER/ADMIN e login Google/OAuth):** 2026-09-24  
 **Atualização (missão 7 — integração Supabase + Gemini + Groq + IA do usuário):** 2026-09-24  
+**Atualização (missão 60 — rate limit §35, tokens §34, config por agente §40, isolamento §56, auditoria §57):** 2026-09-24  
 **Projeto:** NEMO IDE / Open Squad Dashboard  
 **Repositório:** https://github.com/matheusenaa/Agente-NEMO (público, branch `main`)  
 **Executável:** `dist/NEMO_IDE/NEMO_IDE.exe` (23 MB, PyInstaller)  
@@ -564,5 +565,35 @@ O **NEMO IDE / Open Squad Dashboard** está **completo, testado e empacotado** c
 2. Opcional: `GEMINI_API_KEY` / `GROQ_API_KEY` no `.env` (ou pela UI, criptografada por usuário) → chat multi-provedor real.
 3. Validar fluxo completo em ambiente com internet (esta rede INEP bloqueia vários hosts externos).
 4. Revogar/expor a chave OpenRouter antiga do `.env` quando convenient (ela **não** está em Git).
+
+---
+
+## 16. ANEXO — Missão 60: rate limit, tokens, configuração por agente, isolamento
+
+**Data:** 2026-09-24 · **Status:** implementado e testado (54 testes OK, 1 skip esperado). Credenciais Supabase/Gemini/Groq continuam pendentes do usuário (nada foi inventado).
+
+### 16.1 Entregas
+
+| Seção da missão | Entregável | Evidência |
+|-----------------|-----------|-----------|
+| §34 Custos/tokens | `activity_logs` ganhou `prompt_tokens`, `completion_tokens`, `total_tokens` (SQL + interface + LocalStore + SupabaseStore); `_log_activity` repassa os tokens do `CompletionResult` | chat real grava custos; `GET /api/nemo/ai/activity` expõe |
+| §35 Rate limit por usuário | `_SlidingWindowRateLimit` (janela 60s) + `AI_RATE_LIMITER` + env `NEMO_AI_RATE_LIMIT` (padrão 30/min) em `nemo_server.py` | chat responde `rate_limited: True` + mensagem amigável sem quebrar a UI |
+| §40 Config por agente | `agent_overrides` no `AiSettingsRequest` (merge/remove); resolução no chat: requisição > agente > usuário > sistema; UI nova "Configuração por agente" no `AiSettingsCard` | teste confirma prioridades e remoção |
+| §56 Isolamento multiusuário | `test_multiuser.py` verifica que dados/chaves/atividade do usuário A jamais aparecem para B (conversas, tasks, memórias, chaves, activity) | verde |
+| §57 Auditoria de chaves | `git grep` nos arquivos rastreados → apenas chaves sintéticas de testes/docs; `.env` e `_data/` fora do versionamento; respostas só máscara | verde |
+| Frontend | `saveAiConfig` aceita `agent_overrides`; tipo `AiConfigResponse.settings.agent_overrides`; UI de override por agente | build OK (96 módulos, ~25s) |
+| Docs | `README.md` (rate limit, overrides, tokens, isolamento, `NEMO_AI_RATE_LIMIT`), este anexo, linha de data no cabeçalho | — |
+| Testes | `test_multiuser.py` (isolamento + chaves + rate limit + overrides + tokens) | **54 testes, OK** |
+
+### 16.2 Decisões técnicas
+
+1. Rate limit usa **semáforo+janela deslizante** por `user_id` (não por IP) — correto para app multi-usuário autenticado; `_hits` em memória (retorna a zero no restart, aceitável).
+2. Overrides por agente são **merge** na persistência (não destroem configs de outros agentes); envio de objeto vazio **remove** o override.
+3. Tokens são gravados com `default 0` no banco — entrada sem tokens não quebra quadros/agregações existentes.
+4. Auditoria contínua: nenhum segredo além da máscara chega ao frontend; service role/anon nunca no cliente.
+
+### 16.3 Pendências (credendiais do usuário)
+
+Na `Central de IA` → "Minhas API Keys", salve por usuário: **Gemini** (aistudio.google.com/apikey), **Groq** (console.groq.com/keys) e, para Supabase, rode `supabase/migrations/001_schema_init.sql` no SQL Editor e preencha `SUPABASE_URL`/`SUPABASE_ANON_KEY`/`SUPABASE_SERVICE_ROLE_KEY` no `.env`. Depois de ativar, rodar o teste ao vivo (chat real Gemini/Groq).
 
 ---

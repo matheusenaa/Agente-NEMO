@@ -184,6 +184,9 @@ create table if not exists public.activity_logs (
     provider   text not null default '',
     model      text not null default '',
     latency_ms real not null default 0,
+    prompt_tokens    bigint not null default 0,
+    completion_tokens bigint not null default 0,
+    total_tokens     bigint not null default 0,
     created_at timestamptz not null default now()
 );
 create index if not exists idx_activity_user on public.activity_logs (user_id, created_at desc);

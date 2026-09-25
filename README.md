@@ -228,9 +228,13 @@ O backend fala com **uma camada abstrata** (`ai_providers.py`) — o restante do
 | 🧠 OpenAI | `OPENAI_API_KEY` | OpenAI-compatível |
 | 🌐 OpenRouter | `OPENROUTER_API_KEY` | via `openrouter_client.py` |
 
-- **Resolução**: Configurações do usuário (`Configurações → Inteligência Artificial`) > `NEMO_AI_PROVIDER` > modelo padrão do agente.
+- **Resolução**: Configurações do usuário (`Configurações → Inteligência Artificial`) > configuração por agente (`agent_overrides`) > `NEMO_AI_PROVIDER` > modelo padrão do agente.
+- **Configuração por agente**: na Central de IA é possível escolher provedor/modelo específicos por agente (missão §40); prioridade: parâmetros da requisição > override do agente > padrão do usuário > padrão do sistema/agente.
+- **Rate limit de IA**: por usuário, janela deslizante de 60s (`NEMO_AI_RATE_LIMIT`, padrão `30`/min — missão §35). Ao atingir o limite, o chat responde graciosamente com `rate_limited: True`.
 - **Fallbacks**: se o provedor escolhido não tiver chave, degrada para o primeiro configurado (máximo **3 tentativas**, missão §33). Sem nenhuma chave → resposta graciosa offline.
+- **Custos/tokens**: cada chamada de chat registra `prompt_tokens`, `completion_tokens` e `total_tokens` na atividade (missão §34) — visíveis em `GET /api/nemo/ai/activity`.
 - **API Keys dos usuários**: guardadas **criptografadas** (Fernet derivado de `AUTH_SECRET`, `ai_keys.py`); o frontend só vê a máscara `****...abcd`; nunca vão para logs/Git.
+- **Isolamento multiusuário**: todo dado (conversa, memória, chave, tarefa, atividade) é por `user_id`, com RLS `auth.uid() = user_id` no Supabase e pastas separadas no modo local (missão §56).
 - **Busca na web**: `web_search.py` usa DuckDuckGo (sem chave) por padrão, com Tavily (`TAVILY_API_KEY`) e Brave (`BRAVE_API_KEY`) quando configurados. A busca é condicional (só quando o agente tem a ferramenta e o pedido indica busca externa) e tem rate-limit por usuário (`WEB_SEARCH_RATE_LIMIT`, padrão 10/min).
 - **Memória + conversas + tarefas**: persistidas por usuário via `data_store.py`.
 
@@ -243,6 +247,7 @@ GROQ_API_KEY=
 OPENAI_API_KEY=
 OPENROUTER_API_KEY=
 NEMO_AI_PROVIDER=gemini        # opcional: provedor padrão do sistema
+NEMO_AI_RATE_LIMIT=30          # opcional: máx. de requisições de IA por minuto por usuário
 
 # Busca na web (opcionais; DDG funciona sem chave):
 TAVILY_API_KEY=
@@ -275,7 +280,7 @@ Com `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`, conversas, memórias, chaves, 
 
 ```powershell
 # Backend (unit)
-python -m unittest test_client_unit test_ai_providers test_ai_keys test_web_search test_data_store -v
+python -m unittest test_client_unit test_ai_providers test_ai_keys test_web_search test_data_store test_multiuser -v
 # ou
 python -m pytest test_client_unit.py -q
 

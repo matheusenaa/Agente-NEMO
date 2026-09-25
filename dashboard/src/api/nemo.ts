@@ -111,7 +111,11 @@ export const nemoApi = {
   async aiConfig(): Promise<AiConfigResponse> {
     return request("/ai/config");
   },
-  async saveAiConfig(data: { default_provider?: string; default_model?: string }): Promise<{ ok: boolean }> {
+  async saveAiConfig(data: {
+    default_provider?: string;
+    default_model?: string;
+    agent_overrides?: Record<string, { provider?: string; model?: string }>;
+  }): Promise<{ ok: boolean }> {
     return request("/ai/config", { method: "POST", body: JSON.stringify(data) });
   },
   async saveAiKey(provider: string, apiKey: string, model?: string): Promise<{
