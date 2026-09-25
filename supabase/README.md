@@ -22,6 +22,9 @@ com Row Level Security (RLS)**.
 2. Cole o conteúdo de [`migrations/001_schema_init.sql`](migrations/001_schema_init.sql).
 3. **Run**. O script cria as tabelas, as policies de **RLS** (exigem `auth.uid()` igual a `user_id`)
    e um trigger que cria `profiles` automaticamente quando um usuário se registra pelo Auth Supabase.
+4. (Opcional, contas persistidas) Repita os passos 1-3 com
+   [`migrations/002_auth_tables.sql`](migrations/002_auth_tables.sql): cria `auth_users` e
+   `auth_sessions` (contas e logins sobrevivem a redeploy). Sem isso o auth segue local.
 
 ## 3. Configurar o NEMO
 

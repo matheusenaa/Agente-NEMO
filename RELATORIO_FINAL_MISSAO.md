@@ -621,4 +621,17 @@ Na `Central de IA` → "Minhas API Keys", salve por usuário: **Gemini** (aistud
 | 🧪 **Testes** | `test_mission_features.py` (4 testes: perfil, busca+exclusão, isolamento, health) rodando contra o **Supabase real** | suíte completa **58 OK (1 skip)** |
 | 📚 **Docs** | README atualizado (endpoints, perfil, busca/exclusão de conversas, default_model) + esta seção | — |
 
+### 16.6 Administração e persistência de contas (ADMIN + Supabase auth)
+
+**Data:** 2026-09-25 · motivação do usuário: "colocar minha conta como ADM, configurar outras contas e não precisar ficar criando conta a cada acesso".
+
+| Item | O que foi feito | Validação |
+|------|------------------|-----------|
+| 👤 **Bootstrap ADMIN** | `NEMO_ADMIN_EMAIL` no `.env`: ao registrar/logar com o e-mail, a conta vira `admin` automaticamente (nos dois backends) | ao vivo: registro com o e-mail → `role: admin` no `/auth/me` |
+| 🛡️ **Painel ADMIN** | `GET/POST /api/admin/users`, `PUT /api/admin/users/role`, `PUT /api/admin/users/{id}/password`; frontend: card "🛡️ Usuários" em Configurações (listar, criar conta, promover/rebaixar, redefinir senha) | testes `test_admin` (4): não-admin 403, CRUD completo, guarda do último admin (400), cadastro aberto desativável |
+| 🗄️ **Contas no Supabase** | migration `002_auth_tables.sql`: `auth_users` + `auth_sessions` (service role; RLS sem policies = anon negado); `SupabaseAuthStore` replica a API do `AuthStore` (`auth_supabase.py`); sem Supabase, fallback local intacto | ao vivo: sessão resolve num store novo ("restart"); smoke completo (PRINT 1..9) |
+| 🔒 **Login persistente** | sessões de 7 dias gravadas no banco → token continua válido após restart/redeploy (antes: só em memória) | `test_sessions_persist_across_store_restart` |
+| 🚪 **Cadastro opcional** | `NEMO_OPEN_REGISTRATION=0` desativa registro aberto (só admin cria) | teste cobre o 403 |
+| 🧪 **Testes** | suíte completa | **62 OK (1 skip)** — auth agora contra o Supabase real |
+
 ---

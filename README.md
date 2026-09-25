@@ -260,9 +260,21 @@ WEB_SEARCH_RATE_LIMIT=10
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
+
+# Autenticação (opcionais):
+NEMO_ADMIN_EMAIL=voce@exemplo.com   # bootstrap: esta conta vira ADMIN no login/registro
+NEMO_OPEN_REGISTRATION=1            # 0 desativa cadastro aberto (só ADMIN cria contas)
 ```
 
 > **AUTH_SECRET** passa a ter papel duplo: assina tokens de sessão **e** deriva a chave Fernet das API Keys. Guarde uma valor forte e estável (trocar o valor invalida as chaves já armazenadas).
+
+### Contas (ADMIN + persistência)
+
+- **Contas e sessões no banco**: com Supabase configurado, usuários (`auth_users`) e sessões (`auth_sessions`) vivem no PostgreSQL via **service role** — sobrevivem a redeploy e a login (7 dias) persiste entre restarts. Sem Supabase, caem no `_data/users.json` + sessões em memória.
+- **Admin bootstrap**: defina `NEMO_ADMIN_EMAIL` no `.env`. Ao registrar/logar com esse e-mail, a conta vira **admin** automaticamente (≫ na 1ª vez crie sua conta com esse e-mail).
+- **Painel de ADMIN**: Configurações → "🛡️ Usuários" — listar, **criar contas**, promover/rebaixar e redefinir senhas (`GET /api/admin/users`, `POST /api/admin/users`, `PUT /api/admin/users/role`, `PUT /api/admin/users/{id}/password`).
+- **Proteções**: só ADMIN acessa o painel; o último admin não pode se rebaixar (`400`); `NEMO_OPEN_REGISTRATION=0` bloqueia cadastro aberto.
+- **Migração necessária**: `supabase/migrations/002_auth_tables.sql` (auth_users + auth_sessions com RLS e **sem policies** — só o backend acessa).
 
 ### Supabase (opcional)
 

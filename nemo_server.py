@@ -776,6 +776,8 @@ class RegisterRequest(BaseModel):
 
 @app.post("/api/auth/register")
 def register(req: RegisterRequest) -> Dict[str, Any]:
+    if os.getenv("NEMO_OPEN_REGISTRATION", "1").strip().lower() not in ("1", "true", "yes", "on"):
+        raise HTTPException(status_code=403, detail="Cadastro aberto desativado. Peça a um administrador para criar sua conta.")
     try:
         user, token = AUTH_STORE.register(req.name, req.email, req.password)
     except AuthError as exc:
@@ -923,12 +925,47 @@ def admin_list_users(request: Request) -> Dict[str, Any]:
 
 @app.put("/api/admin/users/role")
 def admin_set_role(req: RoleRequest, request: Request) -> Dict[str, Any]:
-    _require_admin(request)
+    admin = _require_admin(request)
     if not req.userId:
         raise HTTPException(status_code=400, detail="Informe userId.")
     if req.role not in ("user", "admin"):
         raise HTTPException(status_code=400, detail="Role inválida. Use 'user' ou 'admin'.")
+    if req.role == "user" and AUTH_STORE.admin_count() <= 1:
+        raise HTTPException(status_code=400, detail="Você é o único admin. Promova outra conta antes de rebaixar esta.")
     user = AUTH_STORE.set_role(req.userId, req.role)
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+    return {"ok": True, "user": user}
+
+
+class AdminCreateUserRequest(BaseModel):
+    name: str = ""
+    email: str = ""
+    password: str = ""
+    role: str = "user"
+
+
+@app.post("/api/admin/users")
+def admin_create_user(req: AdminCreateUserRequest, request: Request) -> Dict[str, Any]:
+    _require_admin(request)
+    try:
+        user = AUTH_STORE.create_user(req.name, req.email, req.password, req.role)
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message)
+    return {"ok": True, "user": user}
+
+
+class AdminResetPasswordRequest(BaseModel):
+    password: str = ""
+
+
+@app.put("/api/admin/users/{user_id}/password")
+def admin_reset_password(user_id: str, req: AdminResetPasswordRequest, request: Request) -> Dict[str, Any]:
+    _require_admin(request)
+    try:
+        user = AUTH_STORE.reset_password(user_id, req.password)
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message)
     if not user:
         raise HTTPException(status_code=404, detail="Usuário não encontrado.")
     return {"ok": True, "user": user}
