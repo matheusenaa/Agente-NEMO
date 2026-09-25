@@ -1,5 +1,10 @@
 # NEMO — IDE de Agentes de IA
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python: 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
+[![Render Deploy](https://img.shields.io/badge/Render-deploy-green.svg)](https://render.com)
+[![GitHub](https://img.shields.io/badge/GitHub-repo-black.svg)](https://github.com/matheusenaa/Agente-NEMO)
+
 **NEMO** é o seu **coordenador pessoal de agentes de IA** com identidade visual de **Vasco da Gama** 🔵⚪ (o time adversário não aparece 👀).
 
 Ele orquestra uma equipe especializada de agentes (cada um com personalidade, modelo padrão no OpenRouter e fallbacks automáticos) construída **por você, para o seu trabalho real**: finanças, dados, pesquisa, redação, revisão, design, vídeo, redes sociais, SEO, publicação e TI (o JARVIS, engenheiro de software sênior).
@@ -58,6 +63,7 @@ NEMO/
 > - Produção 1-clique Windows: `NEMO_START.bat` ou `start_nemo.bat`
 > - Executável: `dist\NEMO_IDE\NEMO_IDE.exe`
 > - Antigravity/Linux: `python start_nemo.py --host 0.0.0.0`
+> - Primeiro administrador: `python start_nemo.py --create-admin`
 
 ### 0. Instalação
 
@@ -68,7 +74,23 @@ cd dashboard; npm install; cd ..
 
 > **Atenção (PowerShell)**: se o comando `npm` for bloqueado pela *Execution Policy* (erro de `npm.ps1`), use **`npm.cmd`** (ex.: `npm.cmd run build`, `npm.cmd run dev`).
 
-### 1. Backend (Python)
+### 1. Criar o primeiro ADM
+
+Em uma instalação nova, rode o comando abaixo na raiz do projeto:
+
+```powershell
+python start_nemo.py --create-admin
+```
+
+O comando solicita nome, e-mail e senha de forma interativa. Se o e-mail já estiver cadastrado, a senha atual é exigida para promover a conta. Nenhuma credencial é fixa no código; a operação é recusada quando já existe um administrador.
+
+Também é possível informar nome e e-mail sem abrir esses prompts:
+
+```powershell
+python start_nemo.py --create-admin --admin-name "Seu Nome" --admin-email "seu-email@exemplo.com"
+```
+
+### 2. Backend (Python)
 
 ```powershell
 # chave da API (opcional — sem ela, respostas ficam em modo offline)
@@ -82,16 +104,16 @@ O servidor sobe em `http://127.0.0.1:8798` e expõe: `/api/nemo/health`, `/api/n
 
 > **Sem `OPENROUTER_API_KEY`**: o chat responde com um aviso amigável e funcionam todas as telas da IDE (arquivos, terminal, tasks, escritório). **Com chave vencida/inválida (HTTP 401)**: o NEMO explica que precisa de uma chave nova. Com chave válida, conversa de verdade via OpenRouter.
 
-### 2. Dashboard (IDE)
+### 3. Dashboard (IDE)
 
 ```powershell
 cd dashboard
-npm.cmd run dev        # http://localhost:5173 (proxy /api/nemo → 8798)
+npm.cmd run dev        # http://localhost:5173 (proxy /api/nemo, /api/auth e /api/admin → 8798)
 ```
 
 Build de produção: `npm.cmd run build` (gera `dashboard/dist/`, já embutido no executável).
 
-### 3. Launcher universal — `python start_nemo.py`
+### 4. Launcher universal — `python start_nemo.py`
 
 A forma mais simples de rodar (Windows, Linux ou Antigravity):
 
@@ -111,13 +133,13 @@ npm run nemo:server  # = python nemo_server.py
 npm run nemo:check   # = diagnóstico
 ```
 
-### 4. Produção 1-clique (Windows)
+### 5. Produção 1-clique (Windows)
 
 - **`NEMO_START.bat`** — launcher robusto: verifica Python, instala dependências se faltarem, compila o dashboard se necessário, copia `.env.example`→`.env` se não existir, sobe o backend e abre o navegador em `http://127.0.0.1:8798/`.
 - **`start_nemo.bat`** — sobe o backend com o dashboard compilado e abre o navegador.
 - **`start_nemo_dev.bat`** — backend (8798) + Vite dev com HMR (5173).
 
-### 5. Executável standalone (PyInstaller)
+### 6. Executável standalone (PyInstaller)
 
 ```powershell
 dist\NEMO_IDE\NEMO_IDE.exe [--port 8798] [--host 127.0.0.1]
@@ -132,7 +154,7 @@ python -m PyInstaller NEMO_IDE.spec --noconfirm
 
 O build empacota o backend, os `agents/`, `squads/`, `skills/` e o `dashboard/dist/`.
 
-### 6. Diagnóstico do sistema
+### 7. Diagnóstico do sistema
 
 ```powershell
 python start_nemo.py --check      # qualquer sistema
@@ -218,9 +240,9 @@ Cada agente tem **modelo padrão + fallbacks** (ex.: `openai/gpt-4o` → `anthro
 
 ```powershell
 # Backend (unit)
-python -m pytest test_client_unit.py -q
+python -m pytest test_client_unit.py test_auth.py -q
 # ou
-python test_client_unit.py
+python -m unittest test_client_unit test_auth
 
 # Frontend
 cd dashboard

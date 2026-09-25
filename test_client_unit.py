@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
 
 import unittest
 from unittest.mock import patch, MagicMock
-from openai import NotFoundError
+from openai import NotFoundError, RateLimitError
 
 from models_config import get_all_models, get_model_by_id, ModelInfo
 from openrouter_client import OpenRouterClient, CompletionResult
@@ -131,7 +131,31 @@ class TestOpenRouterIntegration(unittest.TestCase):
             self.assertEqual(result.content, "OK claude-sonnet-4")
             self.assertEqual(result.total_tokens, 20)
 
-    def test_error_detectors_auth_and_connection(self):
+    def test_chat_completion_automatic_fallback_on_rate_limit(self):
+        client = OpenRouterClient(api_key="sk-or-v1-mock-valid-key")
+        mock_choice = MagicMock()
+        mock_choice.message.content = "resposta após fallback"
+        mock_choice.finish_reason = "stop"
+        mock_usage = MagicMock(prompt_tokens=8, completion_tokens=4, total_tokens=12)
+        mock_response = MagicMock(choices=[mock_choice], usage=mock_usage)
+
+        def mock_create(model, **kwargs):
+            if model == "openai/gpt-4o":
+                raise RateLimitError("429 rate limit", response=MagicMock(status_code=429), body=None)
+            return mock_response
+
+        with patch.object(client.client.chat.completions, "create", side_effect=mock_create):
+            result = client.chat_completion(
+                model="openai/gpt-4o",
+                messages=[{"role": "user", "content": "Test"}],
+                fallback_slugs=["openai/gpt-4o-mini"],
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.model_used, "openai/gpt-4o-mini")
+        self.assertTrue(result.is_fallback)
+        self.assertEqual(result.finish_reason, "stop")
+
         """Verifica que os detectores distinguem erro 401 (chave) de falha de rede."""
         # Casos que DEVEM ser tratados como erro de autenticação
         auth_cases = [
@@ -157,7 +181,9 @@ class TestOpenRouterIntegration(unittest.TestCase):
 
     def test_chat_offline_on_connection_blocked(self):
         """Rede bloqueada com chave válida → resposta graciosa offline, não erro cru."""
+        import tempfile
         import nemo_server as ns
+        from auth import AuthStore
 
         client = OpenRouterClient(api_key="sk-or-v1-mocked-key-for-testing")
         blocked = CompletionResult(
@@ -173,18 +199,134 @@ class TestOpenRouterIntegration(unittest.TestCase):
         from fastapi.testclient import TestClient
         from nemo_server import app
 
-        with patch.object(ns, "get_client", return_value=client):
-            with patch.object(client, "chat_completion", return_value=blocked):
-                tc = TestClient(app)
-                resp = tc.post(
-                    "/api/nemo/chat",
-                    json={"agent": "analista", "message": "oi", "messages": [], "max_tokens": 200},
-                )
-                self.assertEqual(resp.status_code, 200)
-                data = resp.json()
-                self.assertTrue(data["ok"])
-                self.assertTrue(data["offline"])
-                self.assertTrue(data["is_fallback"])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            auth_store = AuthStore(Path(temp_dir))
+            _, token = auth_store.register("Teste", "teste@example.com", "senha-segura")
+            with patch.object(ns, "AUTH_STORE", auth_store):
+                with patch.object(ns, "get_client", return_value=client):
+                    with patch.object(client, "chat_completion", return_value=blocked):
+                        tc = TestClient(app)
+                        resp = tc.post(
+                            "/api/nemo/chat",
+                            headers={"Authorization": f"Bearer {token}"},
+                            json={"agent": "analista", "message": "oi", "messages": [], "max_tokens": 200},
+                        )
+                        self.assertEqual(resp.status_code, 200)
+                        data = resp.json()
+                        self.assertFalse(data["ok"])
+                        self.assertTrue(data["offline"])
+                        self.assertFalse(data["is_fallback"])
+                        self.assertEqual(data["error_code"], "openrouter_unavailable")
+                        self.assertIn("OpenRouter", data["content"])
+
+
+class TestServerSecurity(unittest.TestCase):
+    def test_cookie_session_and_role_protection(self):
+        import tempfile
+        from fastapi.testclient import TestClient
+        import nemo_server as ns
+        from auth import ADMIN_EMAIL, AuthStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = AuthStore(Path(temp_dir))
+            with patch.object(ns, "AUTH_STORE", store):
+                with TestClient(ns.app) as client:
+                    response = client.post(
+                        "/api/auth/register",
+                        json={"name": "Pessoa", "email": "pessoa@example.com", "password": "senha-segura"},
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    self.assertNotIn("token", response.json())
+                    self.assertIn("nemo_session", response.headers.get("set-cookie", ""))
+                    self.assertEqual(client.get("/api/nemo/files").status_code, 403)
+                    self.assertEqual(client.post("/api/nemo/terminal", json={"command": "dir"}).status_code, 403)
+
+                    store.bootstrap_admin("Administrador", ADMIN_EMAIL, "senha-segura")
+                    client.post("/api/auth/logout")
+                    login = client.post(
+                        "/api/auth/login",
+                        json={"email": ADMIN_EMAIL, "password": "senha-segura"},
+                    )
+                    self.assertEqual(login.status_code, 200)
+                    self.assertEqual(client.get("/api/nemo/files").status_code, 200)
+
+    def test_events_are_isolated_between_users(self):
+        import tempfile
+        from fastapi.testclient import TestClient
+        import nemo_server as ns
+        from auth import AuthStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = AuthStore(Path(temp_dir))
+            with patch.object(ns, "AUTH_STORE", store):
+                with TestClient(ns.app) as client:
+                    client.post(
+                        "/api/auth/register",
+                        json={"name": "Alice", "email": "a@example.com", "password": "senha-segura"},
+                    )
+                    created = client.post(
+                        "/api/nemo/events",
+                        json={"title": "Privado", "date": "2030-01-01", "time": "10:00"},
+                    )
+                    self.assertEqual(created.status_code, 200)
+                    self.assertEqual(len(client.get("/api/nemo/events").json()), 1)
+                    client.post("/api/auth/logout")
+                    client.post(
+                        "/api/auth/register",
+                        json={"name": "Bob", "email": "b@example.com", "password": "senha-segura"},
+                    )
+                    self.assertEqual(client.get("/api/nemo/events").json(), [])
+
+    def test_cross_origin_state_change_is_rejected(self):
+        import tempfile
+        from fastapi.testclient import TestClient
+        import nemo_server as ns
+        from auth import AuthStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = AuthStore(Path(temp_dir))
+            with patch.object(ns, "AUTH_STORE", store):
+                with TestClient(ns.app) as client:
+                    client.post(
+                        "/api/auth/register",
+                        json={"name": "Pessoa", "email": "pessoa@example.com", "password": "senha-segura"},
+                    )
+                    response = client.post(
+                        "/api/nemo/chat",
+                        headers={"Origin": "https://evil.example"},
+                        json={"agent": "nemo", "message": "oi"},
+                    )
+                    self.assertEqual(response.status_code, 403)
+
+    def test_oauth_callback_sets_session_cookie(self):
+        import tempfile
+        from fastapi.testclient import TestClient
+        import nemo_server as ns
+        from auth import AuthStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = AuthStore(Path(temp_dir))
+            state, nonce = store.create_oauth_state("google")
+            with patch.object(ns, "AUTH_STORE", store), patch.object(
+                ns,
+                "exchange",
+                return_value={
+                    "provider": "google",
+                    "provider_id": "google-123",
+                    "email": "oauth@example.com",
+                    "name": "OAuth",
+                    "email_verified": True,
+                },
+            ):
+                with TestClient(ns.app) as client:
+                    client.cookies.set("nemo_oauth_state", nonce)
+                    response = client.get(
+                        "/api/auth/oauth/google/callback",
+                        params={"code": "authorization-code", "state": state},
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    self.assertIn("nemo_session", response.headers.get("set-cookie", ""))
+                    self.assertEqual(client.get("/api/auth/me").status_code, 200)
 
 
 if __name__ == "__main__":

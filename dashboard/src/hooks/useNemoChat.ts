@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useIdeStore } from "@/store/useIdeStore";
-import { nemoApi } from "@/api/nemo";
+import { nemoApi, type ChatHistoryMessage } from "@/api/nemo";
 import { getAgent } from "@/data/agents";
 import { FUNNY_PHRASES, pickPhrase } from "@/data/statusPhrases";
 
@@ -48,9 +48,9 @@ export function useNemoChat() {
       let ok = false;
       let offline = false;
       // Histórico da conversa com esse agente (sem a última msg do usuário duplicar)
-      const history: string[] = (threads[agentId] ?? [])
-        .map((m) => m.content)
-        .filter((c) => c && c !== content)
+      const history: ChatHistoryMessage[] = (threads[agentId] ?? [])
+        .filter((m) => m.content.trim().length > 0 && m.status !== "typing" && m.status !== "sending")
+        .map((m): ChatHistoryMessage => ({ role: m.role === "agent" ? "assistant" : "user", content: m.content }))
         .slice(-12);
       try {
         const res = await nemoApi.chat(agentId, content, history, agent.defaultModel);
@@ -60,17 +60,27 @@ export function useNemoChat() {
           patchMessage(agentId, msgId, {
             content: res.content,
             status: "done",
-            meta: { model: res.model_used, latencyMs: res.latency_ms, isFallback: res.is_fallback, promptTokens: res.prompt_tokens, completionTokens: res.completion_tokens },
+            meta: {
+              model: res.model_used,
+              latencyMs: res.latency_ms,
+              isFallback: !!res.is_fallback && !res.offline,
+              promptTokens: res.prompt_tokens,
+              completionTokens: res.completion_tokens,
+            },
           });
-          addLog({ tone: "warn", agentId, text: res.offline ? `Chave OpenRouter inválida/expirada — resposta offline gerada` : `${agent.name}: respondido (${res.model_used}, ${res.latency_ms ?? 0}ms)` });
-          notify({ icon: agent.icon, text: `${agent.name} respondeu`, tone: res.offline ? "warn" : "ok" });
+          addLog({ tone: res.is_fallback ? "warn" : "info", agentId, text: res.is_fallback ? `${agent.name}: resposta via fallback (${res.model_used})` : `${agent.name}: respondido (${res.model_used}, ${res.latency_ms ?? 0}ms)` });
+          notify({ icon: agent.icon, text: `${agent.name} respondeu`, tone: res.is_fallback ? "warn" : "ok" });
         } else {
-          patchMessage(agentId, msgId, { content: res.error ?? "Erro desconhecido.", status: "error" });
-          addLog({ tone: "error", agentId, text: `${agent.name}: ${(res.error ?? "").slice(0, 140)}` });
+          const message = res.content ?? res.error ?? "Erro desconhecido.";
+          patchMessage(agentId, msgId, { content: message, error: res.error, status: "error" });
+          addLog({ tone: res.offline ? "warn" : "error", agentId, text: `${agent.name}: ${message.slice(0, 140)}` });
+          notify({ icon: agent.icon, text: `${agent.name}: ${res.error_code ?? "erro"}`, tone: res.offline ? "warn" : "error" });
         }
-      } catch {
-        patchMessage(agentId, msgId, { content: OFFLINE_RESPONSES[agentId] ?? OFFLINE_RESPONSES.default, status: "done" });
-        addLog({ tone: "warn", agentId, text: "Servidor NEMO não respondeu — resposta offline gerada" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Servidor NEMO indisponível.";
+        patchMessage(agentId, msgId, { content: OFFLINE_RESPONSES[agentId] ?? OFFLINE_RESPONSES.default, error: message, status: "error" });
+        addLog({ tone: "error", agentId, text: `Servidor NEMO não respondeu: ${message.slice(0, 140)}` });
+        notify({ icon: agent.icon, text: "Servidor NEMO indisponível", tone: "error" });
       }
 
       window.clearInterval(im);

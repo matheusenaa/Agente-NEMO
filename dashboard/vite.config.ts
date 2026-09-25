@@ -11,10 +11,18 @@ export default defineConfig({
     },
   },
   server: {
-    host: "0.0.0.0",
+    host: "127.0.0.1",
     proxy: {
       // Backend NEMO (FastAPI) — python nemo_server.py
       "/api/nemo": {
+        target: "http://127.0.0.1:8798",
+        changeOrigin: true,
+      },
+      "/api/auth": {
+        target: "http://127.0.0.1:8798",
+        changeOrigin: true,
+      },
+      "/api/admin": {
         target: "http://127.0.0.1:8798",
         changeOrigin: true,
       },

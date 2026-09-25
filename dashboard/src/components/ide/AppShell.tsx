@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { useIdeStore } from "@/store/useIdeStore";
+import { hydrateIdeForUser, useIdeStore } from "@/store/useIdeStore";
 import { useSquadSocket } from "@/hooks/useSquadSocket";
 import { useEventReminders } from "@/hooks/useEventReminders";
 import { getTheme } from "@/data/themes";
@@ -58,6 +58,7 @@ export function AppShell() {
   const bottomOpen = useIdeStore((s) => s.bottomOpen);
   const config = useIdeStore((s) => s.config);
   const [bottomTab, setBottomTab] = useState<"terminal" | "logs" | "running">("terminal");
+  const [ideReady, setIdeReady] = useState(false);
 
   const authUser = useAuthStore((s) => s.user);
   const checking = useAuthStore((s) => s.checking);
@@ -68,6 +69,23 @@ export function AppShell() {
   }, [restore]);
 
   useEffect(() => {
+    let alive = true;
+    if (!authUser) {
+      setIdeReady(false);
+      return () => {
+        alive = false;
+      };
+    }
+    setIdeReady(false);
+    void hydrateIdeForUser(authUser.id).then(() => {
+      if (alive) setIdeReady(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [authUser?.id]);
+
+  useEffect(() => {
     useIdeStore.getState().ensureAmbientPhrase(true);
     const id = window.setInterval(() => {
       if (!document.hidden) useIdeStore.getState().ensureAmbientPhrase();
@@ -76,7 +94,14 @@ export function AppShell() {
   }, []);
 
   useEffect(() => {
-    if (!authUser) return;
+    if (!authUser) {
+      try {
+        localStorage.removeItem("nemo-user-name");
+      } catch {
+        return;
+      }
+      return;
+    }
     try {
       localStorage.setItem("nemo-user-name", authUser.name);
     } catch { /* fallback */ }
@@ -135,7 +160,7 @@ export function AppShell() {
   const effectiveView =
     !isAdmin && ADMIN_VIEWS.has(activeView) ? "dashboard" : activeView;
 
-  if (checking) {
+  if (checking || (authUser && !ideReady)) {
     return (
       <div className="auth-verify">
         <div className="auth-logo">🐟</div>

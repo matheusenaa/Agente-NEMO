@@ -33,6 +33,8 @@ import hashlib
 import json
 import os
 import socket
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -157,14 +159,13 @@ def _post(url: str, data: Dict[str, Any]) -> Dict[str, Any]:
         with urllib.request.urlopen(req, timeout=15) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as e:
-        raw = e.read().decode("utf-8", errors="replace")
-        raise OAuthError(f"Provedor OAuth respondeu HTTP {e.code}: {raw[:200]}", 502)
+        raise OAuthError(f"Provedor OAuth respondeu HTTP {e.code}.", 502)
     except Exception as e:  # noqa: BLE001
         raise OAuthError(f"Falha de rede no provedor OAuth: {e}", 502)
     try:
         return json.loads(raw)
     except Exception:
-        raise OAuthError(f"Resposta inválida do provedor OAuth: {raw[:200]}", 502)
+        raise OAuthError("Resposta inválida do provedor OAuth.", 502)
 
 
 def _get_json(url: str, headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
@@ -180,14 +181,13 @@ def _get_json(url: str, headers: Optional[Dict[str, str]] = None) -> Dict[str, A
         with urllib.request.urlopen(req, timeout=15) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as e:
-        raw = e.read().decode("utf-8", errors="replace")
-        raise OAuthError(f"Provedor OAuth respondeu HTTP {e.code}: {raw[:200]}", 502)
+        raise OAuthError(f"Provedor OAuth respondeu HTTP {e.code}.", 502)
     except Exception as e:  # noqa: BLE001
         raise OAuthError(f"Falha de rede no provedor OAuth: {e}", 502)
     try:
         return json.loads(raw)
     except Exception:
-        raise OAuthError(f"Resposta inválida do provedor OAuth: {raw[:200]}", 502)
+        raise OAuthError("Resposta inválida do provedor OAuth.", 502)
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +199,7 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
 
-def google_authorize_url(redirect_uri: str, state: str) -> str:
+def google_authorize_url(redirect_uri: str, state: str, nonce: str = "") -> str:
     cfg = load_configs()["google"]
     if not cfg.enabled:
         raise OAuthError("Login Google não configurado.", 501)
@@ -212,10 +212,12 @@ def google_authorize_url(redirect_uri: str, state: str) -> str:
         "access_type": "online",
         "prompt": "select_account",
     }
+    if nonce:
+        params["nonce"] = nonce
     return GOOGLE_AUTH_URL + "?" + urllib.parse.urlencode(params)
 
 
-def google_exchange(code: str, redirect_uri: str) -> Dict[str, Any]:
+def google_exchange(code: str, redirect_uri: str, nonce: str = "") -> Dict[str, Any]:
     cfg = load_configs()["google"]
     data = _post(GOOGLE_TOKEN_URL, {
         "client_id": cfg.client_id,
@@ -226,7 +228,7 @@ def google_exchange(code: str, redirect_uri: str) -> Dict[str, Any]:
     })
     access_token = data.get("access_token")
     if not access_token:
-        raise OAuthError(f"Google não retornou access_token: {data}", 502)
+        raise OAuthError("Google não retornou access_token.", 502)
     info = _get_json(GOOGLE_USERINFO_URL, {"Authorization": f"Bearer {access_token}"})
     account = {
         "provider": "google",
@@ -234,9 +236,12 @@ def google_exchange(code: str, redirect_uri: str) -> Dict[str, Any]:
         "email": (info.get("email") or "").strip().lower(),
         "name": info.get("name") or info.get("given_name") or "Novo usuário",
         "picture": info.get("picture") or "",
+        "email_verified": info.get("email_verified") is True or str(info.get("email_verified", "")).lower() == "true",
     }
-    if not account["email"]:
-        raise OAuthError("Google não retornou e-mail.", 502)
+    if not account["email"] or not account["provider_id"]:
+        raise OAuthError("Google não retornou perfil válido.", 502)
+    if not account["email_verified"]:
+        raise OAuthError("Google não confirmou o e-mail da conta.", 403)
     return account
 
 
@@ -249,7 +254,7 @@ MS_TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 MS_USERINFO_URL = "https://graph.microsoft.com/v1.0/me"
 
 
-def microsoft_authorize_url(redirect_uri: str, state: str) -> str:
+def microsoft_authorize_url(redirect_uri: str, state: str, nonce: str = "") -> str:
     cfg = load_configs()["microsoft"]
     if not cfg.enabled:
         raise OAuthError("Login Microsoft não configurado.", 501)
@@ -261,10 +266,12 @@ def microsoft_authorize_url(redirect_uri: str, state: str) -> str:
         "state": state,
         "response_mode": "query",
     }
+    if nonce:
+        params["nonce"] = nonce
     return MS_AUTH_URL + "?" + urllib.parse.urlencode(params)
 
 
-def microsoft_exchange(code: str, redirect_uri: str) -> Dict[str, Any]:
+def microsoft_exchange(code: str, redirect_uri: str, nonce: str = "") -> Dict[str, Any]:
     cfg = load_configs()["microsoft"]
     data = _post(MS_TOKEN_URL, {
         "client_id": cfg.client_id,
@@ -276,7 +283,7 @@ def microsoft_exchange(code: str, redirect_uri: str) -> Dict[str, Any]:
     })
     access_token = data.get("access_token")
     if not access_token:
-        raise OAuthError(f"Microsoft não retornou access_token: {data}", 502)
+        raise OAuthError("Microsoft não retornou access_token.", 502)
     info = _get_json(MS_USERINFO_URL, {"Authorization": f"Bearer {access_token}"})
     account = {
         "provider": "microsoft",
@@ -285,6 +292,7 @@ def microsoft_exchange(code: str, redirect_uri: str) -> Dict[str, Any]:
             .strip().lower(),
         "name": info.get("displayName") or "Novo usuário",
         "picture": "",
+        "email_verified": True,
     }
     try:
         account["email"] = account["email"].replace("#EXT#", "").lower()
@@ -301,6 +309,7 @@ def microsoft_exchange(code: str, redirect_uri: str) -> Dict[str, Any]:
 
 APPLE_AUTH_URL = "https://appleid.apple.com/auth/authorize"
 APPLE_TOKEN_URL = "https://appleid.apple.com/auth/token"
+APPLE_JWKS_URL = "https://appleid.apple.com/auth/keys"
 
 
 def _apple_client_secret() -> str:
@@ -315,7 +324,7 @@ def _apple_client_secret() -> str:
 
     cfg = load_configs()["apple"]
     now = int(os.environ.get("APPLE_IAT_TRICK", "0"))
-    iat = now if now else int(__import__("time").time())
+    iat = now if now else int(time.time())
     exp = iat + 6 * 60 * 60  # 6 horas (máximo permitido)
 
     header = {"alg": "ES256", "kid": cfg.key_id}
@@ -345,7 +354,7 @@ def _apple_client_secret() -> str:
     return f"{signing_input.decode()}.{_b64(raw)}"
 
 
-def apple_authorize_url(redirect_uri: str, state: str) -> str:
+def apple_authorize_url(redirect_uri: str, state: str, nonce: str = "") -> str:
     cfg = load_configs()["apple"]
     if not cfg.enabled:
         raise OAuthError("Login Apple não configurado.", 501)
@@ -357,10 +366,63 @@ def apple_authorize_url(redirect_uri: str, state: str) -> str:
         "response_mode": "form_post",
         "state": state,
     }
+    if nonce:
+        params["nonce"] = nonce
     return APPLE_AUTH_URL + "?" + urllib.parse.urlencode(params)
 
 
-def apple_exchange(code: str, redirect_uri: str) -> Dict[str, Any]:
+def _decode_base64url(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def _verify_apple_id_token(id_token: str, client_id: str) -> Dict[str, Any]:
+    try:
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+    except Exception as exc:
+        raise OAuthError(f"Biblioteca 'cryptography' necessária para validar o Apple: {exc}", 501)
+
+    parts = id_token.split(".")
+    if len(parts) != 3:
+        raise OAuthError("Apple id_token malformado.", 502)
+    try:
+        header = json.loads(_decode_base64url(parts[0]))
+        claims = json.loads(_decode_base64url(parts[1]))
+        signature = _decode_base64url(parts[2])
+    except Exception:
+        raise OAuthError("Apple id_token não pôde ser decodificado.", 502)
+    if header.get("alg") != "ES256":
+        raise OAuthError("Algoritmo de assinatura Apple inválido.", 502)
+    keys = _get_json(APPLE_JWKS_URL).get("keys", [])
+    key_data = next((key for key in keys if key.get("kid") == header.get("kid")), None)
+    if not key_data:
+        raise OAuthError("Chave de assinatura Apple não encontrada.", 502)
+    try:
+        x = int.from_bytes(_decode_base64url(str(key_data["x"])), "big")
+        y = int.from_bytes(_decode_base64url(str(key_data["y"])), "big")
+        public_key = ec.EllipticCurvePublicNumbers(x, y, ec.SECP256R1()).public_key()
+        public_key.verify(
+            signature,
+            f"{parts[0]}.{parts[1]}".encode("utf-8"),
+            ec.ECDSA(hashes.SHA256()),
+        )
+    except Exception:
+        raise OAuthError("Assinura do id_token Apple inválida.", 502)
+
+    now = int(time.time())
+    audience = claims.get("aud")
+    audiences = audience if isinstance(audience, list) else [audience]
+    if claims.get("iss") != "https://appleid.apple.com" or client_id not in audiences:
+        raise OAuthError("Claims do Apple inválidos.", 502)
+    try:
+        if int(claims.get("exp", 0)) <= now:
+            raise OAuthError("id_token Apple expirado.", 502)
+    except (TypeError, ValueError):
+        raise OAuthError("Expiração do id_token Apple inválida.", 502)
+    return claims
+
+
+def apple_exchange(code: str, redirect_uri: str, expected_nonce: str = "") -> Dict[str, Any]:
     cfg = load_configs()["apple"]
     data = _post(APPLE_TOKEN_URL, {
         "client_id": cfg.client_id,
@@ -371,25 +433,26 @@ def apple_exchange(code: str, redirect_uri: str) -> Dict[str, Any]:
     })
     id_token = data.get("id_token")
     if not id_token:
-        raise OAuthError(f"Apple não retornou id_token: {data}", 502)
-    try:
-        payload = id_token.split(".")[1]
-        payload += "=" * (-len(payload) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(payload))
-    except Exception:
-        claims = {}
+        raise OAuthError("Apple não retornou id_token.", 502)
+    claims = _verify_apple_id_token(id_token, cfg.client_id)
+    if expected_nonce and claims.get("nonce") != expected_nonce:
+        raise OAuthError("Nonce do Apple não confere.", 403)
     account = {
         "provider": "apple",
         "provider_id": claims.get("sub") or "",
         "email": (claims.get("email") or "").strip().lower(),
         "name": claims.get("name") or "Novo usuário",
         "picture": "",
+        "email_verified": claims.get("email_verified") is True or str(claims.get("email_verified", "")).lower() == "true",
     }
     if not account["provider_id"]:
         raise OAuthError("Apple não retornou sub no id_token.", 502)
     if not account["email"]:
         account["email"] = account["provider_id"] + "@privaterelay.appleid.com"
         account["name"] = "Usuário Apple"
+        account["email_verified"] = True
+    if not account["email_verified"]:
+        raise OAuthError("Apple não confirmou o e-mail da conta.", 403)
     return account
 
 
@@ -397,7 +460,7 @@ def apple_exchange(code: str, redirect_uri: str) -> Dict[str, Any]:
 # DESPACHO
 # ---------------------------------------------------------------------------
 
-def authorize_url(provider: str, redirect_uri: str, state: str) -> str:
+def authorize_url(provider: str, redirect_uri: str, state: str, nonce: str = "") -> str:
     fn = {
         "google": google_authorize_url,
         "microsoft": microsoft_authorize_url,
@@ -405,10 +468,10 @@ def authorize_url(provider: str, redirect_uri: str, state: str) -> str:
     }.get(provider)
     if not fn:
         raise OAuthError(f"Provedor OAuth desconhecido: {provider}", 400)
-    return fn(redirect_uri, state)
+    return fn(redirect_uri, state, nonce)
 
 
-def exchange(provider: str, code: str, redirect_uri: str) -> Dict[str, Any]:
+def exchange(provider: str, code: str, redirect_uri: str, nonce: str = "") -> Dict[str, Any]:
     fn = {
         "google": google_exchange,
         "microsoft": microsoft_exchange,
@@ -416,4 +479,4 @@ def exchange(provider: str, code: str, redirect_uri: str) -> Dict[str, Any]:
     }.get(provider)
     if not fn:
         raise OAuthError(f"Provedor OAuth desconhecido: {provider}", 400)
-    return fn(code, redirect_uri)
+    return fn(code, redirect_uri, nonce)

@@ -7,6 +7,7 @@ Uso:
     python start_nemo.py --port 8798
     python start_nemo.py --no-browser  # não abre o navegador automaticamente
     python start_nemo.py --check       # modo diagnóstico (não inicia o servidor)
+    python start_nemo.py --create-admin  # cria o primeiro ADM e encerra
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ except Exception:
     pass
 
 ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 DIST = ROOT / "dashboard" / "dist"
 DEFAULT_HOST = os.getenv("HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.getenv("PORT", "8798"))
@@ -160,13 +163,52 @@ def _read_env_key() -> str:
     return ""
 
 
+def create_first_admin(name: str | None, email: str | None) -> int:
+    import getpass
+    from auth import AuthError, make_auth_store
+
+    store = make_auth_store(ROOT)
+    if store.has_admin():
+        print("Já existe uma conta ADM neste projeto.")
+        return 1
+
+    try:
+        admin_name = (name or input("Nome do ADM: ")).strip()
+        admin_email = (email or input("E-mail do ADM: ")).strip()
+        password = getpass.getpass("Senha do ADM: ")
+        confirmation = getpass.getpass("Confirme a senha: ")
+    except (EOFError, KeyboardInterrupt):
+        print("\nOperação cancelada.")
+        return 1
+
+    if password != confirmation:
+        print("As senhas não conferem.")
+        return 1
+
+    try:
+        user, created = store.bootstrap_admin(admin_name, admin_email, password)
+    except AuthError as exc:
+        print(f"Não foi possível criar o ADM: {exc.message}")
+        return 1
+
+    action = "criada" if created else "promovida"
+    print(f"Conta ADM {action}: {user['name']} <{user['email']}>")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="NEMO IDE Launcher")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--check", action="store_true", help="roda o diagnóstico e encerra")
+    parser.add_argument("--create-admin", action="store_true", help="cria o primeiro ADM e encerra")
+    parser.add_argument("--admin-name", help="nome usado com --create-admin")
+    parser.add_argument("--admin-email", help="e-mail usado com --create-admin")
     args = parser.parse_args()
+
+    if args.create_admin:
+        return create_first_admin(args.admin_name, args.admin_email)
 
     if args.check:
         return diagnose()

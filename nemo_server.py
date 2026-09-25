@@ -59,7 +59,7 @@ import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 # Garante que a raiz do projeto esteja no sys.path independente do ambiente
 def _get_project_root() -> Path:
@@ -89,10 +89,10 @@ ROOT = _get_project_root()
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi import Body, FastAPI, Form, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from openrouter_client import OpenRouterClient, CompletionResult
 from models_config import OPENROUTER_MODELS, get_model_by_id, get_all_models
@@ -111,8 +111,16 @@ SKILLS_DIR = ROOT / "skills"
 DASHBOARD_DIST = ROOT / "dashboard" / "dist"
 DATA_DIR = ROOT / "_data"
 EVENTS_FILE = DATA_DIR / "events.json"
+SENSITIVE_PATH_PARTS = {".git", "_data", "node_modules", "__pycache__"}
+SENSITIVE_FILE_NAMES = {
+    ".env", "auth_secret", "sessions.json", "users.json", "oauth_states.json",
+    "id_rsa", "id_ed25519",
+}
+SENSITIVE_FILE_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".p8"}
 
 AUTH_STORE: AuthStore = make_auth_store(ROOT)
+SESSION_COOKIE_NAME = "nemo_session"
+OAUTH_STATE_COOKIE_NAME = "nemo_oauth_state"
 
 DEFAULT_HOST = os.getenv("HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.getenv("PORT", "8798"))
@@ -224,8 +232,9 @@ def _discover_agents() -> List[Dict[str, Any]]:
             "icon": meta.get("icon", ICON_BY_CATEGORY.get(category, "🤖")),
             "category": category,
             "role": meta.get("role", ""),
+            "body": meta.get("body", ""),
             "version": meta.get("version", "1.0.0"),
-            "file": str(path),
+            "file": path.relative_to(ROOT).as_posix(),
             "defaultModel": CATEGORY_MODEL_MAP.get(category, CATEGORY_MODEL_DEFAULT),
         })
     return agents
@@ -281,9 +290,25 @@ def _safe_resolve(path_str: str) -> Path:
     if not p.is_absolute():
         p = ROOT / p
     p = p.resolve()
-    if str(p) != str(ROOT) and str(ROOT) not in str(p):
+    try:
+        p.relative_to(ROOT)
+    except ValueError:
         raise HTTPException(status_code=400, detail="Caminho fora do diretório do projeto.")
     return p
+
+
+def _is_sensitive_path(path: Path) -> bool:
+    try:
+        relative = path.relative_to(ROOT)
+    except ValueError:
+        return True
+    if any(part in SENSITIVE_PATH_PARTS for part in relative.parts):
+        return True
+    if relative.name in SENSITIVE_FILE_NAMES:
+        return True
+    if relative.name.startswith(".") and relative.name != ".env.example":
+        return True
+    return relative.suffix.lower() in SENSITIVE_FILE_SUFFIXES
 
 
 def _is_destructive(command: str) -> Optional[str]:
@@ -293,7 +318,25 @@ def _is_destructive(command: str) -> Optional[str]:
     return None
 
 
+def _contains_sensitive_path(command: str) -> bool:
+    lowered = command.casefold()
+    markers = (
+        ".env", "auth_secret", "sessions.json", "users.json", "oauth_states.json",
+        ".git/", ".git\\", "id_rsa", "id_ed25519", ".p8", ".pem", ".key",
+    )
+    return any(marker in lowered for marker in markers)
+
+
 def _run_command(command: str, force: bool = False, timeout: int = 60) -> Dict[str, Any]:
+    if _contains_sensitive_path(command):
+        return {
+            "ok": False,
+            "requires_confirm": False,
+            "reason": "O comando referencia um caminho sensível bloqueado.",
+            "stdout": "",
+            "stderr": "",
+            "code": None,
+        }
     matched = _is_destructive(command)
     if matched and not force:
         return {
@@ -460,6 +503,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def origin_guard(request: Request, call_next):
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and request.url.path.startswith("/api/"):
+        if not request.url.path.startswith("/api/auth/oauth/") or not request.url.path.endswith("/callback"):
+            origin = request.headers.get("origin", "").rstrip("/")
+            fetch_site = request.headers.get("sec-fetch-site", "").lower()
+            request_origin = _request_base(request).rstrip("/")
+            if origin and origin not in _cors_origins and origin != request_origin:
+                return JSONResponse({"detail": "Origem da requisição não permitida."}, status_code=403)
+            if not origin and fetch_site == "cross-site":
+                return JSONResponse({"detail": "Origem da requisição não permitida."}, status_code=403)
+    return await call_next(request)
+
+
 _client: Optional[OpenRouterClient] = None
 
 
@@ -471,29 +529,29 @@ def get_client() -> OpenRouterClient:
 
 
 class ChatMessage(BaseModel):
-    role: str
-    content: str
+    role: Literal["user", "assistant"]
+    content: str = Field(default="", max_length=12000)
 
 
 class ChatRequest(BaseModel):
-    agent: str = "nemo"
-    messages: List[ChatMessage] = []
-    message: str = ""
-    model: Optional[str] = None
-    temperature: float = 0.7
-    max_tokens: int = 900
-    context: str = ""
+    agent: str = Field(default="nemo", min_length=1, max_length=100)
+    messages: List[ChatMessage] = Field(default_factory=list, max_length=20)
+    message: str = Field(default="", max_length=12000)
+    model: Optional[str] = Field(default=None, max_length=200)
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=900, ge=1, le=4000)
+    context: str = Field(default="", max_length=12000)
 
 
 class FileSaveRequest(BaseModel):
-    path: str
-    content: str
+    path: str = Field(min_length=1, max_length=500)
+    content: str = Field(max_length=2_000_000)
 
 
 class TerminalRequest(BaseModel):
-    command: str
+    command: str = Field(min_length=1, max_length=4000)
     force: bool = False
-    timeout: int = 60
+    timeout: int = Field(default=60, ge=1, le=120)
 
 
 class EventRequest(BaseModel):
@@ -530,12 +588,43 @@ def health(request: Request) -> Dict[str, Any]:
     }
 
 
-def _current_user(request: "Request") -> Optional[Dict[str, Any]]:
-    """Resolve o usuário autenticado a partir do header Authorization: Bearer <token>."""
+def _session_token(request: Request) -> Optional[str]:
     auth = request.headers.get("Authorization", "")
-    if not auth.lower().startswith("bearer "):
-        return None
-    token = auth[7:].strip()
+    if auth.lower().startswith("bearer "):
+        token = auth[7:].strip()
+        return token or None
+    return request.cookies.get(SESSION_COOKIE_NAME) or None
+
+
+def _secure_cookie(request: Request) -> bool:
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    return forwarded_proto == "https" or request.url.scheme == "https"
+
+
+def _set_session_cookie(response: Response, request: Request, token: str, remember: bool) -> None:
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        token,
+        max_age=AuthStore.session_max_age(remember),
+        httponly=True,
+        secure=_secure_cookie(request),
+        samesite="lax",
+        path="/",
+    )
+
+
+def _clear_session_cookie(response: Response, request: Request) -> None:
+    response.delete_cookie(
+        SESSION_COOKIE_NAME,
+        httponly=True,
+        secure=_secure_cookie(request),
+        samesite="lax",
+        path="/",
+    )
+
+
+def _current_user(request: "Request") -> Optional[Dict[str, Any]]:
+    token = _session_token(request)
     return AUTH_STORE.resolve_token(token) if token else None
 
 
@@ -561,37 +650,42 @@ def _require_admin(request: "Request") -> Dict[str, Any]:
 class LoginRequest(BaseModel):
     email: str = ""
     password: str = ""
+    remember: bool = True
 
 
 class RegisterRequest(BaseModel):
     name: str = ""
     email: str = ""
     password: str = ""
+    remember: bool = True
 
 
 @app.post("/api/auth/register")
-def register(req: RegisterRequest) -> Dict[str, Any]:
+def register(req: RegisterRequest, request: Request, response: Response) -> Dict[str, Any]:
     try:
-        user, token = AUTH_STORE.register(req.name, req.email, req.password)
+        user, token = AUTH_STORE.register(req.name, req.email, req.password, req.remember)
     except AuthError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.message)
-    return {"ok": True, "user": user, "token": token}
+    _set_session_cookie(response, request, token, req.remember)
+    return {"ok": True, "user": user}
 
 
 @app.post("/api/auth/login")
-def login(req: LoginRequest) -> Dict[str, Any]:
+def login(req: LoginRequest, request: Request, response: Response) -> Dict[str, Any]:
     try:
-        user, token = AUTH_STORE.login(req.email, req.password)
+        user, token = AUTH_STORE.login(req.email, req.password, req.remember)
     except AuthError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.message)
-    return {"ok": True, "user": user, "token": token}
+    _set_session_cookie(response, request, token, req.remember)
+    return {"ok": True, "user": user}
 
 
 @app.post("/api/auth/logout")
-def logout(request: Request) -> Dict[str, Any]:
-    auth = request.headers.get("Authorization", "")
-    if auth.lower().startswith("bearer "):
-        AUTH_STORE.revoke_token(auth[7:].strip())
+def logout(request: Request, response: Response) -> Dict[str, Any]:
+    token = _session_token(request)
+    if token:
+        AUTH_STORE.revoke_token(token)
+    _clear_session_cookie(response, request)
     return {"ok": True}
 
 
@@ -635,18 +729,24 @@ def oauth_status() -> Dict[str, Any]:
 
 
 @app.get("/api/auth/oauth/{provider}/start")
-def oauth_start(provider: str, request: Request) -> Dict[str, Any]:
-    """Gera a URL de autorização e o state (assinado) para o provedor."""
-    random_part = secrets.token_urlsafe(24)
-    # Assina o state para validar no callback (previne CSRF em login social).
-    digest = hmac.new(AUTH_STORE.secret, random_part.encode("utf-8"), hashlib.sha256).hexdigest()
-    # O provedor devolve apenas `state` — embutimos a assinatura junto.
-    state = f"{random_part}.{digest}"
+def oauth_start(provider: str, request: Request, response: Response) -> Dict[str, Any]:
+    if provider not in ("google", "microsoft", "apple"):
+        raise HTTPException(status_code=400, detail="Provedor OAuth desconhecido.")
+    state, nonce = AUTH_STORE.create_oauth_state(provider)
     redirect_uri = f"{_request_base(request)}/api/auth/oauth/{provider}/callback"
     try:
-        url = authorize_url(provider, redirect_uri, state)
+        url = authorize_url(provider, redirect_uri, state, nonce)
     except OAuthError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.message)
+    response.set_cookie(
+        OAUTH_STATE_COOKIE_NAME,
+        nonce,
+        max_age=600,
+        httponly=True,
+        secure=_secure_cookie(request),
+        samesite="none" if provider == "apple" and _secure_cookie(request) else "lax",
+        path="/",
+    )
     return {
         "ok": True,
         "provider": provider,
@@ -655,46 +755,72 @@ def oauth_start(provider: str, request: Request) -> Dict[str, Any]:
     }
 
 
-@app.get("/api/auth/oauth/{provider}/callback")
-def oauth_callback(provider: str, request: Request, code: str = "", state: str = "") -> JSONResponse:
-    """Callback do provedor: valida state, troca o code por perfil e loga."""
+def _complete_oauth(provider: str, request: Request, response: Response, code: str, state: str) -> HTMLResponse:
+    if len(code) > 4096 or len(state) > 512:
+        raise HTTPException(status_code=400, detail="Parâmetros OAuth inválidos.")
     if not code:
         raise HTTPException(status_code=400, detail="Código de autorização ausente.")
-    if "." not in state:
-        raise HTTPException(status_code=403, detail="State ausente ou malformado. Tente novamente.")
-    random_part, _, sig = state.rpartition(".")
-    expected = hmac.new(AUTH_STORE.secret, random_part.encode("utf-8"), hashlib.sha256).hexdigest()
-    if not random_part or not hmac.compare_digest(expected, sig or ""):
-        raise HTTPException(status_code=403, detail="State inválido ou expirado. Tente novamente.")
+    nonce = state.rpartition(".")[0]
+    browser_nonce = request.cookies.get(OAUTH_STATE_COOKIE_NAME, "")
+    if not nonce or not browser_nonce or not hmac.compare_digest(browser_nonce, nonce):
+        raise HTTPException(status_code=403, detail="State inválido, expirado ou associado a outro navegador.")
+    record = AUTH_STORE.consume_oauth_state(state, provider)
+    if not record:
+        raise HTTPException(status_code=403, detail="State inválido, expirado ou já utilizado.")
     redirect_uri = f"{_request_base(request)}/api/auth/oauth/{provider}/callback"
     try:
-        account = exchange(provider, code, redirect_uri)
+        account = exchange(provider, code, redirect_uri, nonce)
         user, token = AUTH_STORE.oauth_login(
             provider,
             account.get("provider_id", ""),
             account.get("email", ""),
             account.get("name", ""),
+            account.get("email_verified") is True,
         )
     except OAuthError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.message)
     except AuthError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.message)
-
-    # Conclui no frontend: redireciona com token+user (hash) para /auth#oauth=1.
-    payload = base64.urlsafe_b64encode(
-        json.dumps({"token": token, "user": user}).encode("utf-8")
-    ).rstrip(b"=").decode()
-    url = f"/#oauth={payload}"
+    _set_session_cookie(response, request, token, True)
+    response.delete_cookie(
+        OAUTH_STATE_COOKIE_NAME,
+        httponly=True,
+        secure=_secure_cookie(request),
+        samesite="lax",
+        path="/",
+    )
     html = (
         "<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'>"
-        "<meta http-equiv='refresh' content='0;url={url}'></head>"
+        "<meta http-equiv='refresh' content='0;url=/#oauth=success'></head>"
         "<body><p>Login concluído — redirecionando…</p></body></html>"
-    ).format(url=url)
-    return HTMLResponse(html, status_code=200)
+    )
+    result = HTMLResponse(html, status_code=200)
+    for key, value in response.raw_headers:
+        if key.lower() == b"set-cookie":
+            result.raw_headers.append((key, value))
+    return result
+
+
+@app.get("/api/auth/oauth/{provider}/callback")
+def oauth_callback(provider: str, request: Request, response: Response, code: str = "", state: str = "") -> HTMLResponse:
+    return _complete_oauth(provider, request, response, code, state)
+
+
+@app.post("/api/auth/oauth/{provider}/callback")
+def oauth_callback_post(
+    provider: str,
+    request: Request,
+    response: Response,
+    code: str = Form(""),
+    state: str = Form(""),
+) -> HTMLResponse:
+    return _complete_oauth(provider, request, response, code, state)
 
 
 def _request_base(request: Request) -> str:
-    """Base pública do request (schema://host) para montar redirect_uris."""
+    configured_base = os.getenv("OAUTH_REDIRECT_BASE", "").strip().rstrip("/")
+    if configured_base:
+        return configured_base
     forwarded = request.headers.get("x-forwarded-proto", "")
     scheme = forwarded.split(",")[0].strip() or request.url.scheme
     host = request.headers.get("x-forwarded-host") or request.url.netloc
@@ -713,7 +839,11 @@ class RoleRequest(BaseModel):
 @app.get("/api/admin/users")
 def admin_list_users(request: Request) -> Dict[str, Any]:
     _require_admin(request)
-    return {"ok": True, "users": AUTH_STORE.list_users()}
+    return {
+        "ok": True,
+        "users": AUTH_STORE.list_users(),
+        "duplicate_emails": AUTH_STORE.duplicate_emails(),
+    }
 
 
 @app.put("/api/admin/users/role")
@@ -723,7 +853,10 @@ def admin_set_role(req: RoleRequest, request: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="Informe userId.")
     if req.role not in ("user", "admin"):
         raise HTTPException(status_code=400, detail="Role inválida. Use 'user' ou 'admin'.")
-    user = AUTH_STORE.set_role(req.userId, req.role)
+    try:
+        user = AUTH_STORE.set_role(req.userId, req.role)
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message)
     if not user:
         raise HTTPException(status_code=404, detail="Usuário não encontrado.")
     return {"ok": True, "user": user}
@@ -739,7 +872,6 @@ def context(request: Request) -> Dict[str, Any]:
     _require_user(request)
     return {
         "project": PROJECT_NAME,
-        "root": str(ROOT),
         "agents": _discover_agents(),
         "models": [m.id for m in get_all_models()],
         "squads": [d.name for d in sorted(SQUADS_DIR.iterdir()) if d.is_dir() and not d.name.startswith((".", "_"))] if SQUADS_DIR.is_dir() else [],
@@ -828,10 +960,10 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
         "role": "Assistente pessoal.", "defaultModel": CATEGORY_MODEL_DEFAULT,
     }
     model = req.model or agent.get("defaultModel") or CATEGORY_MODEL_DEFAULT
-    fallback_slugs: List[str] = []
     mi = get_model_by_id(model)
-    if mi:
-        fallback_slugs = [s for s in [model] if False] + mi.fallback_slugs
+    if mi is None:
+        raise HTTPException(status_code=400, detail="Modelo não configurado para o NEMO.")
+    fallback_slugs = list(mi.fallback_slugs)
     system = _build_system_prompt(agent, req.context)
     messages: List[Dict[str, str]] = [{"role": "system", "content": system}]
     for m in req.messages[-12:]:
@@ -846,13 +978,13 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
     started = time.perf_counter()
     if not c.has_valid_key_format():
         return {
-            "ok": True,
+            "ok": False,
             "agent": req.agent,
-            "content": "⚠️ Minha chave de acesso ao OpenRouter não está configurada. "
-                       "Crie um arquivo `.env` a partir de `.env.example` com sua chave do OpenRouter para eu responder de verdade.\n\n"
-                       "Enquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro. 🐟",
+            "content": "⚠️ Minha chave de acesso ao OpenRouter não está configurada. Crie um arquivo `.env` a partir de `.env.example` com sua chave do OpenRouter para eu responder de verdade.\n\nEnquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro. 🐟",
+            "error": "OPENROUTER_API_KEY não configurada.",
+            "error_code": "missing_key",
             "model_used": model,
-            "is_fallback": True,
+            "is_fallback": False,
             "offline": True,
             "latency_ms": 0,
         }
@@ -875,50 +1007,49 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
             "prompt_tokens": result.prompt_tokens,
             "completion_tokens": result.completion_tokens,
             "total_tokens": result.total_tokens,
+            "finish_reason": result.finish_reason,
         }
     if _is_auth_error(result.error_message or ""):
-        # Chave presente mas inválida/expirada → resposta graciosa em PT-BR
-        # (o frontend exibe como mensagem normal, marcada como fallback offline).
         return {
-            "ok": True,
+            "ok": False,
             "agent": req.agent,
             "content": (
-                "⚠️ Minha chave de acesso ao OpenRouter está **invalida ou expirada** "
-                "(HTTP 401), então não consigo chamar modelos de IA no momento. 🐟\n\n"
+                "⚠️ Minha chave de acesso ao OpenRouter está inválida ou expirada (HTTP 401), então não consigo chamar modelos de IA no momento. 🐟\n\n"
                 "Para voltar a responder de verdade:\n"
-                "1. Abra o arquivo `.env` do projeto e troque `OPENROUTER_API_KEY` por uma chave nova "
-                "(crie em https://openrouter.ai/keys).\n"
-                "2. Reinicie o servidor (`python nemo_server.py`).\n\n"
-                "Enquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro. "
-                "💙 você me deu o diagnóstico?"),
+                "1. Troque `OPENROUTER_API_KEY` no arquivo `.env` por uma chave válida.\n"
+                "2. Reinicie o servidor.\n\n"
+                "Enquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro."),
+            "error": "Credencial do OpenRouter inválida ou expirada.",
+            "error_code": "openrouter_auth",
             "model_used": result.model_used or model,
-            "is_fallback": True,
+            "is_fallback": False,
             "offline": True,
             "latency_ms": latency_ms,
         }
     if _is_connection_error(result.error_message or ""):
-        # OpenRouter inacessível (sem internet / firewall / rede bloqueada) →
-        # mesma resposta graciosa offline, sem expor erro cru de rede.
         return {
-            "ok": True,
+            "ok": False,
             "agent": req.agent,
             "content": (
-                "⚠️ Não consegui acessar o OpenRouter agora (rede indisponível ou bloqueada), "
-                "então não consigo chamar modelos de IA no momento. 🐟\n\n"
-                "Para voltar a responder de verdade:\n"
-                "1. Verifique sua conexão com a internet (e se a rede/firewall permite `openrouter.ai`).\n"
-                "2. Confirme que `OPENROUTER_API_KEY` está válida no `.env` e reinicie o servidor.\n\n"
+                "⚠️ Não consegui acessar o OpenRouter agora (rede indisponível ou bloqueada), então não consigo chamar modelos de IA no momento. 🐟\n\n"
+                "Verifique sua conexão com a internet e o acesso a `openrouter.ai`, confirme a chave no `.env` e reinicie o servidor.\n\n"
                 "Enquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro."),
+            "error": "OpenRouter temporariamente inacessível.",
+            "error_code": "openrouter_unavailable",
             "model_used": result.model_used or model,
-            "is_fallback": True,
+            "is_fallback": False,
             "offline": True,
             "latency_ms": latency_ms,
         }
     return {
         "ok": False,
         "agent": req.agent,
-        "error": result.error_message or "Erro desconhecido ao chamar o modelo.",
+        "content": "Não consegui concluir a solicitação no modelo selecionado.",
+        "error": "Erro ao chamar o modelo selecionado.",
+        "error_code": "openrouter_error",
         "model_used": result.model_used,
+        "is_fallback": result.is_fallback,
+        "offline": False,
         "latency_ms": latency_ms,
     }
 
@@ -927,8 +1058,8 @@ def _is_auth_error(message: str) -> bool:
     """Detecta erros de autentica��o/credencial do OpenRouter na mensagem de erro."""
     lowered = (message or "").lower()
     markers = [
-        "401", "unauthorized", "authentication", "auth", "api key",
-        "invalid", "expirad", "expired", "invalid_api_key", "insufficient",
+        "401", "unauthorized", "authentication", "invalid api key",
+        "invalid_api_key", "invalidapikey", "api key", "expired", "expirad", "insufficient",
     ]
     return any(m in lowered for m in markers)
 
@@ -940,7 +1071,8 @@ def _is_connection_error(message: str) -> bool:
         "apiconnectionerror", "connection error", "connectionerror",
         "connection reset", "reseterror", "reset", "timeout", "timed out",
         "dns", "max retries", "cannot connect", "network", "connection aborted",
-        "unreachable", "ssl", "tls", "failed to resolve",
+        "unreachable", "ssl", "tls", "failed to resolve", "500", "502", "503", "504",
+        "overloaded", "temporarily", "falha transitória",
     ]
     return any(m in lowered for m in markers)
 
@@ -953,6 +1085,8 @@ def list_files(request: Request, path: str = Query("", description="Diretório r
         raise HTTPException(status_code=404, detail="Diretório não encontrado.")
     entries: List[Dict[str, Any]] = []
     for child in sorted(p.iterdir(), key=lambda c: (not c.is_dir(), c.name.lower())):
+        if _is_sensitive_path(child):
+            continue
         if child.name.startswith((".", "_")) and child.name not in (".env.example",):
             continue
         if child.name == "node_modules":
@@ -972,6 +1106,8 @@ def list_files(request: Request, path: str = Query("", description="Diretório r
 def read_file(request: Request, path: str = Query(..., description="Caminho relativo")):
     _require_admin(request)
     p = _safe_resolve(path)
+    if _is_sensitive_path(p):
+        raise HTTPException(status_code=403, detail="Acesso a arquivos sensíveis bloqueado.")
     if not p.is_file():
         raise HTTPException(status_code=404, detail="Arquivo não encontrado.")
     if p.stat().st_size > 1_500_000:
@@ -988,6 +1124,8 @@ def read_file(request: Request, path: str = Query(..., description="Caminho rela
 def save_file(req: FileSaveRequest, request: Request) -> Dict[str, Any]:
     _require_admin(request)
     p = _safe_resolve(req.path)
+    if _is_sensitive_path(p):
+        raise HTTPException(status_code=403, detail="Acesso a arquivos sensíveis bloqueado.")
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(req.content, encoding="utf-8")
@@ -1047,9 +1185,10 @@ def _mount_dashboard() -> None:
         def serve_spa(full_path: str):
             candidate = (DASHBOARD_DIST / full_path).resolve()
             try:
-                if full_path and candidate.is_file() and str(candidate).startswith(str(DASHBOARD_DIST.resolve())):
+                candidate.relative_to(DASHBOARD_DIST.resolve())
+                if full_path and candidate.is_file():
                     return FileResponse(candidate)
-            except Exception:
+            except ValueError:
                 pass
             return FileResponse(DASHBOARD_DIST / "index.html")
 

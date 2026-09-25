@@ -8,13 +8,11 @@ interface AuthState {
   /** true durante a validação inicial da sessão salva */
   checking: boolean;
   error: string | null;
-  login: (email: string, password: string) => Promise<boolean>;
-  register: (name: string, email: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string, remember?: boolean) => Promise<boolean>;
+  register: (name: string, email: string, password: string, remember?: boolean) => Promise<boolean>;
   logout: () => Promise<void>;
   restore: () => Promise<void>;
   clearError: () => void;
-  /** Conclui o login social (token recebido via callback OAuth). */
-  completeOAuth: (user: AuthUser, token: string) => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -25,11 +23,11 @@ export const useAuthStore = create<AuthState>()(
       checking: true,
       error: null,
 
-      login: async (email, password) => {
+      login: async (email, password, remember = true) => {
         set({ error: null });
         try {
-          const res = await authApi.login(email, password);
-          set({ user: res.user, token: res.token, checking: false });
+          const res = await authApi.login(email, password, remember);
+          set({ user: res.user, token: "", checking: false });
           return true;
         } catch (err) {
           set({ error: (err as Error).message, checking: false });
@@ -37,11 +35,11 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      register: async (name, email, password) => {
+      register: async (name, email, password, remember = true) => {
         set({ error: null });
         try {
-          const res = await authApi.register(name, email, password);
-          set({ user: res.user, token: res.token, checking: false });
+          const res = await authApi.register(name, email, password, remember);
+          set({ user: res.user, token: "", checking: false });
           return true;
         } catch (err) {
           set({ error: (err as Error).message, checking: false });
@@ -50,38 +48,36 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: async () => {
-        const token = get().token;
+        const token = get().token || undefined;
         try {
-          if (token) await authApi.logout(token);
+          await authApi.logout(token);
         } catch {
-          // sessão já inválida — limpa local mesmo assim
+          set({ error: null });
+        }
+        try {
+          localStorage.removeItem("nemo-auth");
+          localStorage.removeItem("nemo-user-name");
+        } catch {
+          set({ error: null });
         }
         set({ user: null, token: "", checking: false, error: null });
       },
 
       restore: async () => {
-        const { token } = get();
-        if (!token) {
-          set({ checking: false });
-          return;
-        }
+        const legacyToken = get().token || undefined;
         try {
-          const res = await authApi.me(token);
-          set({ user: res.user, checking: false });
+          const res = await authApi.me(legacyToken);
+          set({ user: res.user, token: "", checking: false, error: null });
         } catch {
-          // token expirado/inválido — desloga localmente
           set({ user: null, token: "", checking: false, error: null });
         }
       },
 
       clearError: () => set({ error: null }),
-
-      completeOAuth: (user, token) =>
-        set({ user, token, checking: false, error: null }),
     }),
     {
       name: "nemo-auth",
-      partialize: (s) => ({ user: s.user, token: s.token }),
+      partialize: (s) => ({ user: s.user }),
     },
   ),
 );

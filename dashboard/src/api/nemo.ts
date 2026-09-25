@@ -15,15 +15,24 @@ function getToken(): string {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
   const res = await fetch(`${BASE}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
     ...init,
+    headers,
+    credentials: "include",
   });
   if (!res.ok) {
-    const detail = await res.text().catch(() => "");
+    const raw = await res.text().catch(() => "");
+    let detail = raw;
+    try {
+      const parsed = JSON.parse(raw) as { detail?: unknown; error?: unknown; message?: unknown };
+      detail = String(parsed.detail ?? parsed.error ?? parsed.message ?? raw);
+    } catch {
+      detail = raw;
+    }
     throw new Error(detail || `HTTP ${res.status}`);
   }
   return (await res.json()) as T;
@@ -39,6 +48,11 @@ export interface ServerHealth {
   squads: number;
 }
 
+export interface ChatHistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export type ChatResponse =
   | {
       ok: true;
@@ -51,14 +65,25 @@ export type ChatResponse =
       prompt_tokens?: number;
       completion_tokens?: number;
       total_tokens?: number;
+      finish_reason?: string | null;
     }
-  | { ok: false; agent: string; error: string; latency_ms?: number };
+  | {
+      ok: false;
+      agent: string;
+      content?: string;
+      error: string;
+      error_code?: string;
+      model_used?: string;
+      is_fallback?: boolean;
+      offline?: boolean;
+      latency_ms?: number;
+    };
 
 export const nemoApi = {
   async health(): Promise<ServerHealth> {
     return request<ServerHealth>("/health");
   },
-  async chat(agent: string, message: string, history: string[] = [], model?: string): Promise<ChatResponse> {
+  async chat(agent: string, message: string, history: ChatHistoryMessage[] = [], model?: string): Promise<ChatResponse> {
     return request<ChatResponse>("/chat", {
       method: "POST",
       body: JSON.stringify({
@@ -66,7 +91,10 @@ export const nemoApi = {
         message,
         model,
         max_tokens: 1100,
-        messages: history.slice(-12).map((content) => ({ role: "user" as const, content })),
+        messages: history
+          .filter((item) => item.content.trim().length > 0)
+          .slice(-12)
+          .map((item) => ({ role: item.role, content: item.content.slice(0, 12000) })),
       }),
     });
   },

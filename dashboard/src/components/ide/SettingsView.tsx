@@ -1,11 +1,11 @@
-import { useIdeStore } from "@/store/useIdeStore";
+import { clearPersistedIdeState, useIdeStore } from "@/store/useIdeStore";
 import { THEMES } from "@/data/themes";
 import { LAYOUTS } from "@/data/agents";
 import type { Density, IdeConfig, LayoutId } from "@/types/idea";
 
 function resetAll() {
   if (!window.confirm("Resetar TODAS as configurações da NEMO IDE?")) return;
-  localStorage.removeItem("nemo-ide");
+  clearPersistedIdeState();
   localStorage.removeItem("nemo-user-name");
   window.location.reload();
 }

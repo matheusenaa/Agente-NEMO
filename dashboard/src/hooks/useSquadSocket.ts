@@ -21,6 +21,7 @@ export function useSquadSocket() {
   const setSnapshot = useSquadStore((s) => s.setSnapshot);
   const updateSquadState = useSquadStore((s) => s.updateSquadState);
   const setSquadInactive = useSquadStore((s) => s.setSquadInactive);
+  const authUserId = useAuthStore((s) => s.user?.id);
 
   useEffect(() => {
     let disposed = false;
@@ -59,16 +60,15 @@ export function useSquadSocket() {
       const poll = async () => {
         if (disposed) return;
         const token = useAuthStore.getState().token;
-        // Sem sessão, pular: as rotas de snapshot exigem autenticação e o
-        // 401 poluiria o console (na tela de login ainda não há token).
-        if (!token) return;
+        const user = useAuthStore.getState().user;
+        if (!user && !token) return;
         const headers: Record<string, string> = { "Cache-Control": "no-cache" };
         if (token) headers.Authorization = `Bearer ${token}`;
         // Tenta as URLs em ordem: produção primeiro (backend), depois dev (plugin Vite).
         for (const url of SNAPSHOT_URLS) {
           if (disposed) return;
           try {
-            const res = await fetch(url, { cache: "no-store", headers });
+            const res = await fetch(url, { cache: "no-store", headers, credentials: "include" });
             if (!res.ok) continue;
             const data = await res.json();
             if (data && Array.isArray(data.squads)) {
@@ -158,7 +158,7 @@ export function useSquadSocket() {
     // Descobre se o servidor oferece o WebSocket de squads. Em produção o
     // backend serve `squad_ws:false` — nesse caso pulamos o WS direto,
     // evitando o erro de handshake (HTTP 200) registrado no console.
-    fetch("/api/nemo/health", { cache: "no-store" })
+    fetch("/api/nemo/health", { cache: "no-store", credentials: "include" })
       .then((r) => r.json())
       .then((h) => {
         if (disposed) return;
@@ -186,5 +186,5 @@ export function useSquadSocket() {
       wsRef.current?.close();
       wsRef.current = null;
     };
-  }, [setConnected, setSnapshot, updateSquadState, setSquadInactive]);
+  }, [authUserId, setConnected, setSnapshot, updateSquadState, setSquadInactive]);
 }

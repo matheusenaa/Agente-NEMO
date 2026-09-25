@@ -55,10 +55,13 @@ export function LoginView() {
   const [serverOk, setServerOk] = useState(false);
   const [oauthProviders, setOauthProviders] = useState<OAuthProviderInfo[]>([]);
   const [oauthError, setOauthError] = useState("");
+  const [remember, setRemember] = useState(true);
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [formError, setFormError] = useState("");
 
   useEffect(() => {
     let alive = true;
-    fetch("/api/nemo/health", { cache: "no-store" })
+    fetch("/api/nemo/health", { cache: "no-store", credentials: "include" })
       .then((r) => r.json())
       .then((h) => alive && setServerOk(Boolean(h?.project)))
       .catch(() => alive && setServerOk(false));
@@ -69,7 +72,7 @@ export function LoginView() {
 
   useEffect(() => {
     let alive = true;
-    fetch("/api/auth/oauth/status", { cache: "no-store" })
+    fetch("/api/auth/oauth/status", { cache: "no-store", credentials: "include" })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (alive && data?.providers?.length) {
@@ -90,23 +93,10 @@ export function LoginView() {
     };
   }, []);
 
-  // Conclusão do login social: o servidor redireciona para /#oauth=<payload>.
   useEffect(() => {
-    const hash = window.location.hash;
-    if (hash.startsWith("#oauth=")) {
-      try {
-        const raw = hash.slice("#oauth=".length);
-        const padded = raw + "=".repeat((4 - (raw.length % 4)) % 4);
-        const payload = JSON.parse(
-          atob(padded.replace(/-/g, "+").replace(/_/g, "/")),
-        );
-        if (payload?.token && payload?.user) {
-          useAuthStore.getState().completeOAuth(payload.user, payload.token);
-          setOauthError("");
-        }
-      } catch {
-        setOauthError("Falha ao concluir o login social. Tente novamente.");
-      }
+    if (window.location.hash === "#oauth=success") {
+      void useAuthStore.getState().restore();
+      setOauthError("");
       window.history.replaceState(null, "", "/");
     }
   }, []);
@@ -114,7 +104,7 @@ export function LoginView() {
   const startOAuth = async (provider: string) => {
     setOauthError("");
     try {
-      const res = await fetch(`/api/auth/oauth/${provider}/start`, { cache: "no-store" });
+      const res = await fetch(`/api/auth/oauth/${provider}/start`, { cache: "no-store", credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data?.url) window.location.assign(data.url);
@@ -129,12 +119,21 @@ export function LoginView() {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (busy) return;
+    setFormError("");
+    if (mode === "register" && password.length < 8) {
+      setFormError("A senha deve ter pelo menos 8 caracteres.");
+      return;
+    }
+    if (mode === "register" && password !== confirmPassword) {
+      setFormError("As senhas não conferem.");
+      return;
+    }
     setBusy(true);
     try {
       if (mode === "login") {
-        await login(email, password);
+        await login(email, password, remember);
       } else {
-        await register(name, email, password);
+        await register(name, email, password, remember);
       }
     } finally {
       setBusy(false);
@@ -143,6 +142,8 @@ export function LoginView() {
 
   const switchMode = (m: Mode) => {
     setMode(m);
+    setFormError("");
+    setConfirmPassword("");
     clearError();
   };
 
@@ -189,12 +190,27 @@ export function LoginView() {
             label="Senha"
             type="password"
             value={password}
-            placeholder={mode === "register" ? "Mínimo 6 caracteres" : "Sua senha"}
+            placeholder={mode === "register" ? "Mínimo 8 caracteres" : "Sua senha"}
             autoComplete={mode === "register" ? "new-password" : "current-password"}
             onChange={setPassword}
           />
+          {mode === "register" && (
+            <Field
+              label="Confirmar senha"
+              type="password"
+              value={confirmPassword}
+              placeholder="Repita sua senha"
+              autoComplete="new-password"
+              onChange={setConfirmPassword}
+            />
+          )}
 
-          {error && <div className="auth-error">⚠️ {error}</div>}
+          <label className="auth-remember">
+            <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
+            <span>Lembrar de mim</span>
+          </label>
+
+          {(formError || error) && <div className="auth-error">⚠️ {formError || error}</div>}
 
           <button className="auth-submit" type="submit" disabled={busy || checking}>
             {busy

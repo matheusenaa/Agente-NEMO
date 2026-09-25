@@ -116,7 +116,7 @@ OPENROUTER_MODELS: List[ModelInfo] = [
 
 def get_model_by_id(model_id: str) -> Optional[ModelInfo]:
     for model in OPENROUTER_MODELS:
-        if model.id == model_id or model.primary_slug == model_id:
+        if model_id == model.id or model_id == model.primary_slug or model_id in model.fallback_slugs:
             return model
     return None
 

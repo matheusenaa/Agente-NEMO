@@ -42,12 +42,14 @@ class OpenRouterClient:
         referer: Optional[str] = None,
         app_title: Optional[str] = None,
         base_url: str = OPENROUTER_BASE_URL,
+        request_timeout: float = 45.0,
     ):
         # Chave explícita vazia ("") significa SEM chave; só usa o .env quando NADA é passado.
         self.api_key = os.getenv("OPENROUTER_API_KEY", "").strip() if api_key is None else api_key.strip()
         self.referer = referer or os.getenv("OPENROUTER_HTTP_REFERER", "http://localhost:3000")
         self.app_title = app_title or os.getenv("OPENROUTER_APP_TITLE", "NEMO AI Studio")
         self.base_url = base_url
+        self.request_timeout = max(1.0, min(float(request_timeout), 300.0))
 
         self.default_headers = {
             "HTTP-Referer": self.referer,
@@ -59,8 +61,8 @@ class OpenRouterClient:
             base_url=self.base_url,
             api_key=self.api_key if self.api_key else "dummy_key_for_init",
             default_headers=self.default_headers,
-            timeout=120.0,
-            max_retries=2,
+            timeout=self.request_timeout,
+            max_retries=0,
         )
 
         # Cache do catálogo de modelos ativos do OpenRouter
@@ -110,7 +112,7 @@ class OpenRouterClient:
             else:
                 return {
                     "valid": False,
-                    "error": f"Erro de validação da chave (HTTP {resp.status_code}): {resp.text}"
+                    "error": f"Erro de validação da chave (HTTP {resp.status_code})."
                 }
         except Exception as e:
             return {
@@ -162,6 +164,28 @@ class OpenRouterClient:
         # Último caso: envia o primário mesmo assim (pode haver redirecionamento no servidor)
         return model_info.primary_slug, False
 
+    @staticmethod
+    def _error_status(error: BaseException) -> Optional[int]:
+        status = getattr(error, "status_code", None)
+        if not isinstance(status, int):
+            response = getattr(error, "response", None)
+            status = getattr(response, "status_code", None)
+        return status if isinstance(status, int) else None
+
+    @classmethod
+    def _is_retryable_error(cls, error: BaseException) -> bool:
+        status = cls._error_status(error)
+        if status is not None:
+            return status in {408, 425, 429} or status >= 500
+        message = str(error).lower()
+        markers = (
+            "connection", "timeout", "timed out", "temporarily", "overloaded",
+            "rate limit", "too many requests", "429", "service unavailable",
+            "bad gateway", "internal server", "no endpoints", "model not found",
+            "not found", "max retries", "network", "unreachable", "ssl", "tls",
+        )
+        return any(marker in message for marker in markers)
+
     def chat_completion(
         self,
         model: str,
@@ -174,35 +198,43 @@ class OpenRouterClient:
         Envia uma requisição de chat completion com suporte a retry, fallbacks e medição de latência.
         """
         slugs_to_try = [model]
-        if fallback_slugs:
-            for fb in fallback_slugs:
-                if fb not in slugs_to_try:
-                    slugs_to_try.append(fb)
+        for fallback_slug in fallback_slugs or []:
+            if fallback_slug and fallback_slug not in slugs_to_try:
+                slugs_to_try.append(fallback_slug)
 
-        last_error = None
+        temperature = max(0.0, min(float(temperature), 2.0))
+        max_tokens = max(1, min(int(max_tokens), 4000))
+        deadline = time.monotonic() + self.request_timeout
+        last_error: Optional[str] = None
+        last_slug = model
+        total_started = time.perf_counter()
 
         for idx, current_slug in enumerate(slugs_to_try):
-            is_fallback = (idx > 0)
-            start_time = time.perf_counter()
+            is_fallback = idx > 0
+            last_slug = current_slug
+            if time.monotonic() >= deadline and idx > 0:
+                last_error = "Tempo limite total do fallback excedido."
+                break
 
+            start_time = time.perf_counter()
+            remaining_timeout = max(1.0, deadline - time.monotonic())
             try:
                 response = self.client.chat.completions.create(
                     model=current_slug,
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    timeout=120.0,
+                    timeout=remaining_timeout,
                 )
                 latency_ms = (time.perf_counter() - start_time) * 1000
-
                 choice = response.choices[0] if response.choices else None
-                content = choice.message.content.strip() if choice and choice.message.content else ""
+                content = str(choice.message.content or "").strip() if choice else ""
                 finish_reason = choice.finish_reason if choice else None
 
                 usage = response.usage
-                prompt_tokens = usage.prompt_tokens if usage else 0
-                completion_tokens = usage.completion_tokens if usage else 0
-                total_tokens = usage.total_tokens if usage else 0
+                prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+                completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+                total_tokens = getattr(usage, "total_tokens", 0) or 0
 
                 return CompletionResult(
                     success=True,
@@ -217,28 +249,14 @@ class OpenRouterClient:
                     finish_reason=finish_reason,
                 )
 
-            except NotFoundError as e:
-                # Modelo não encontrado: tenta o próximo fallback
-                last_error = f"Modelo não encontrado ({current_slug}): {str(e)}"
+            except NotFoundError as exc:
+                last_error = f"Modelo não encontrado ({current_slug}): {str(exc)}"
                 continue
-            except APIError as e:
-                # Erro de API: verifica se é erro de modelo descontinuado ou sem rota
-                error_str = str(e)
-                if "not found" in error_str.lower() or "no endpoints" in error_str.lower():
-                    last_error = f"Modelo sem rota disponível ({current_slug}): {error_str}"
+            except APIError as exc:
+                error_message = str(exc)
+                if self._is_retryable_error(exc):
+                    last_error = f"Falha transitória ({current_slug}): {error_message}"
                     continue
-                else:
-                    latency_ms = (time.perf_counter() - start_time) * 1000
-                    return CompletionResult(
-                        success=False,
-                        content="",
-                        model_used=current_slug,
-                        original_model=model,
-                        is_fallback=is_fallback,
-                        latency_ms=round(latency_ms, 2),
-                        error_message=f"Erro da API OpenRouter ({type(e).__name__}): {error_str}"
-                    )
-            except Exception as e:
                 latency_ms = (time.perf_counter() - start_time) * 1000
                 return CompletionResult(
                     success=False,
@@ -247,18 +265,32 @@ class OpenRouterClient:
                     original_model=model,
                     is_fallback=is_fallback,
                     latency_ms=round(latency_ms, 2),
-                    error_message=f"Exceção inesperada ({type(e).__name__}): {str(e)}"
+                    error_message=f"Erro da API OpenRouter ({type(exc).__name__}): {error_message}",
+                )
+            except Exception as exc:
+                if self._is_retryable_error(exc):
+                    last_error = f"Falha transitória ({current_slug}): {str(exc)}"
+                    continue
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                return CompletionResult(
+                    success=False,
+                    content="",
+                    model_used=current_slug,
+                    original_model=model,
+                    is_fallback=is_fallback,
+                    latency_ms=round(latency_ms, 2),
+                    error_message=f"Exceção inesperada ({type(exc).__name__}): {str(exc)}",
                 )
 
-        # Se todos os slugs falharem
+        total_latency_ms = (time.perf_counter() - total_started) * 1000
         return CompletionResult(
             success=False,
             content="",
-            model_used=model,
+            model_used=last_slug,
             original_model=model,
-            is_fallback=False,
-            latency_ms=0.0,
-            error_message=last_error or "Todos os slugs tentados falharam."
+            is_fallback=len(slugs_to_try) > 1,
+            latency_ms=round(total_latency_ms, 2),
+            error_message=last_error or "Todos os slugs tentados falharam.",
         )
 
     def test_single_model(

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 import type {
   CalendarEvent, ChatMessage, FileNode, HistoryItem, IdeConfig, LiveStatus, LogEntry,
   NotifItem, OpenFile, TaskItem, TaskStatus, TermLine, ViewId,
@@ -35,7 +35,25 @@ const NEMO_GREETING: ChatMessage = {
   status: "done",
 };
 
-const INITIAL_THREADS: Record<string, ChatMessage[]> = { nemo: [NEMO_GREETING] };
+const IDE_OWNER_KEY = "nemo-ide-owner";
+let ideHydrating = false;
+
+function ideStorageKey(name: string): string {
+  const owner = localStorage.getItem(IDE_OWNER_KEY);
+  return `${name}:${owner ? encodeURIComponent(owner) : "anonymous"}`;
+}
+
+const ideStorage: StateStorage = {
+  getItem: (name) => localStorage.getItem(ideStorageKey(name)),
+  setItem: (name, value) => {
+    if (!ideHydrating) localStorage.setItem(ideStorageKey(name), value);
+  },
+  removeItem: (name) => localStorage.removeItem(ideStorageKey(name)),
+};
+
+function initialThreads(): Record<string, ChatMessage[]> {
+  return { nemo: [{ ...NEMO_GREETING }] };
+}
 
 export function seedThread(agentId: string): ChatMessage {
   const agent = getAgent(agentId);
@@ -126,6 +144,7 @@ interface IdeStore {
   addHistory: (h: Omit<HistoryItem, "id" | "time">) => void;
   deleteHistory: (id: string) => void;
   clearHistory: () => void;
+  resetUserState: () => void;
 }
 
 function withThread(get: () => IdeStore, agentId: string): ChatMessage[] {
@@ -170,7 +189,7 @@ export const useIdeStore = create<IdeStore>()(
         return s.ambientPhrase;
       },
 
-      threads: INITIAL_THREADS,
+      threads: initialThreads(),
       addUserMessage: (agentId, content) => {
         const id = uid("msg");
         set((s) => ({
@@ -283,12 +302,38 @@ export const useIdeStore = create<IdeStore>()(
         set({ history: [] });
         get().addLog({ tone: "warn", text: "Histórico completo excluído" });
       },
+      resetUserState: () => {
+        set({
+          config: DEFAULT_CONFIG,
+          activeView: "dashboard",
+          rightOpen: true,
+          bottomOpen: false,
+          leftOpen: true,
+          activeAgentId: "nemo",
+          liveStatus: { agentId: "nemo", label: "🟢 Online", phrase: "", busy: false },
+          ambientPhrase: pickPhrase(FUNNY_PHRASES, ""),
+          ambientPhraseAt: Date.now(),
+          threads: initialThreads(),
+          events: [],
+          workspacePath: "",
+          openFiles: [],
+          activeFile: null,
+          currentDirCache: [],
+          termLines: [],
+          tasks: [],
+          logs: [],
+          notifications: [],
+          history: [],
+        });
+      },
     }),
     {
       name: "nemo-ide",
+      storage: createJSONStorage(() => ideStorage),
+      skipHydration: true,
       partialize: (s) => ({
         config: s.config,
-activeAgentId: s.activeAgentId,
+        activeAgentId: s.activeAgentId,
         threads: s.threads,
         events: s.events,
         tasks: s.tasks,
@@ -298,3 +343,30 @@ activeAgentId: s.activeAgentId,
     },
   ),
 );
+
+export async function hydrateIdeForUser(userId: string): Promise<void> {
+  if (typeof window === "undefined") return;
+  const owner = userId.trim();
+  const name = "nemo-ide";
+  const targetKey = `${name}:${owner ? encodeURIComponent(owner) : "anonymous"}`;
+  const legacy = localStorage.getItem(name);
+  if (!localStorage.getItem(targetKey) && legacy) {
+    localStorage.setItem(targetKey, legacy);
+    localStorage.removeItem(name);
+  }
+  localStorage.setItem(IDE_OWNER_KEY, owner);
+  ideHydrating = true;
+  try {
+    useIdeStore.getState().resetUserState();
+    await useIdeStore.persist.rehydrate();
+  } finally {
+    ideHydrating = false;
+  }
+}
+
+export function clearPersistedIdeState(): void {
+  if (typeof window === "undefined") return;
+  useIdeStore.persist.clearStorage();
+  localStorage.removeItem("nemo-ide");
+  localStorage.removeItem(IDE_OWNER_KEY);
+}
