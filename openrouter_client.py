@@ -27,6 +27,7 @@ class CompletionResult:
     original_model: str
     is_fallback: bool
     latency_ms: float
+    provider: str = "openrouter"
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0

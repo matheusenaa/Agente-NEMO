@@ -40,9 +40,6 @@ services:
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
         # Service role do projeto (Settings → API). NUNCA no frontend.
-      - key: NEMO_ADMIN_EMAIL
-        sync: false
-        # E-mail que vira ADMIN automaticamente ao registrar/logar
       - key: NEMO_OPEN_REGISTRATION
         sync: false
         # 0 = desativa cadastro aberto (só ADMIN cria contas)

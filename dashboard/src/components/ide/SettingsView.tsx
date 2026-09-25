@@ -1,9 +1,11 @@
+import { useEffect, useState } from "react";
 import { clearPersistedIdeState, useIdeStore } from "@/store/useIdeStore";
 import { THEMES } from "@/data/themes";
 import { LAYOUTS } from "@/data/agents";
 import { AiSettingsCard } from "./AiSettingsCard";
 import { nemoApi } from "@/api/nemo";
 import { adminApi, type AuthUser } from "@/api/auth";
+import { useAuthStore } from "@/store/useAuthStore";
 import type { AiProfile } from "@/types/idea";
 import type { Density, IdeConfig, LayoutId } from "@/types/idea";
 

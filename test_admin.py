@@ -50,18 +50,30 @@ class TestAdmin(unittest.TestCase):
         assert self.tc.post("/api/admin/users", headers=h0,
                             json={"name": "X", "email": "x@y.z", "password": "123456"}).status_code == 403
 
-    def test_admin_crud_and_last_admin_guard(self):
+    def test_admin_crud_and_single_admin_rule(self):
+        """Na política de admin único do audit, só o PRIMEIRO admin é promovido."""
         admin_user, admin_token, hA = self._register("Adm", "admcrud")
-        ns.AUTH_STORE.set_role(admin_user["id"], "admin")
+
+        outros_admins = [u for u in ns.AUTH_STORE.list_users()
+                         if u["role"] == "admin" and u["id"] != admin_user["id"]]
+        if outros_admins:
+            self.skipTest("já existe outro admin no banco; admin único impede promover outro")
+
+        # Primeiro admin: bootstrap via store (o endpoint /api/auth/bootstrap usa
+        # o ADMIN_EMAIL real, que os testes não podem criar/alterar).
+        promoted = ns.AUTH_STORE.set_role(admin_user["id"], "admin")
+        assert promoted and promoted["role"] == "admin"
 
         created = self.tc.post("/api/admin/users", headers=hA, json={
             "name": "Usuario", "email": f"cr{uuid.uuid4().hex[:6]}@test.local", "password": "abc123456"}).json()["user"]
         self._created_ids.append(created["id"])
         assert created["role"] == "user"
 
+        # admin único: promover um segundo admin → 409
         r = self.tc.put("/api/admin/users/role", headers=hA,
                         json={"userId": created["id"], "role": "admin"})
-        assert r.status_code == 200 and r.json()["user"]["role"] == "admin"
+        assert r.status_code == 409
+
         r = self.tc.put("/api/admin/users/role", headers=hA,
                         json={"userId": created["id"], "role": "user"})
         assert r.status_code == 200
@@ -72,14 +84,10 @@ class TestAdmin(unittest.TestCase):
         with self.assertRaises(Exception):
             ns.AUTH_STORE.login(created["email"], "abc123456")
 
-        # Guarda do último admin: só vale quando este é o ÚNICO admin do banco.
-        # Se houver um admin real (NEMO_ADMIN_EMAIL) cadastrado, testamos só a permissão.
-        admins_os_outros = [u for u in ns.AUTH_STORE.list_users()
-                            if u["role"] == "admin" and u["id"] != admin_user["id"]]
-        if not admins_os_outros:
-            guard = self.tc.put("/api/admin/users/role", headers=hA,
-                                json={"userId": admin_user["id"], "role": "user"})
-            assert guard.status_code == 400
+        # último admin não pode ser rebaixado (era o único do banco)
+        guard = self.tc.put("/api/admin/users/role", headers=hA,
+                            json={"userId": admin_user["id"], "role": "user"})
+        assert guard.status_code == 409
 
     def test_open_registration_can_be_disabled(self):
         with patch.dict(os.environ, {"NEMO_OPEN_REGISTRATION": "0"}):

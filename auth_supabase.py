@@ -13,16 +13,23 @@ from __future__ import annotations
 
 import os
 import secrets
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from auth import (
+    ADMIN_EMAIL,
     AuthError,
     AuthStore,
     SESSION_TTL_SECONDS,
+    SHORT_SESSION_TTL_SECONDS,
+    _oauth_states_file,
     _secret,
+    _sessions_file,
+    is_valid_email,
+    normalize_email,
     validate_registration,
 )
 
@@ -43,9 +50,12 @@ class SupabaseAuthStore(AuthStore):
     def __init__(self, root: Path):
         self.root = root
         self.secret = _secret(root)
+        self.sessions_file = _sessions_file(root)
+        self.oauth_states_file = _oauth_states_file(root)
+        self._lock = threading.RLock()
+        self.oauth_states: Dict[str, Dict[str, Any]] = {}
         self.sessions: Dict[str, Dict[str, Any]] = {}
         self._users: Dict[str, Dict[str, Any]] = {}
-        self.admin_email = os.getenv("NEMO_ADMIN_EMAIL", "").strip().lower()
         self.enabled = False
         if not SUPABASE_PKG:
             return
@@ -94,26 +104,20 @@ class SupabaseAuthStore(AuthStore):
             if not self._row("auth_users", id=user_id):
                 return user_id
 
-    def _maybe_promote(self, user_id: str, email: str) -> None:
-        """Bootstrap: NEMO_ADMIN_EMAIL registrado/logado vira admin automaticamente."""
-        if self.admin_email and email and email.strip().lower() == self.admin_email:
-            user = self._row("auth_users", id=user_id)
-            if user and user.get("role") != "admin":
-                self._t("auth_users").update({"role": "admin"}).eq("id", user_id).execute()
-
     # ------------------------------------------------------------------
     # Tokens (sessões persistidas)
     # ------------------------------------------------------------------
-    def _issue_token(self, user_id: str) -> str:
+    def _issue_token(self, user_id: str, remember: bool = True) -> str:
         token = secrets.token_urlsafe(32)
         now = time.time()
+        ttl = SESSION_TTL_SECONDS if remember else SHORT_SESSION_TTL_SECONDS
         self._t("auth_sessions").insert({
             "token": token,
             "user_id": user_id,
             "created_at": _now_iso(),
-            "expires_at": datetime.fromtimestamp(now + SESSION_TTL_SECONDS, tz=timezone.utc).isoformat(),
+            "expires_at": datetime.fromtimestamp(now + ttl, tz=timezone.utc).isoformat(),
         }).execute()
-        self.sessions[token] = {"user_id": user_id, "created_at": now, "expires_at": now + SESSION_TTL_SECONDS}
+        self.sessions[token] = {"user_id": user_id, "created_at": now, "expires_at": now + ttl}
         return token
 
     def resolve_token(self, token: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -139,40 +143,56 @@ class SupabaseAuthStore(AuthStore):
     # ------------------------------------------------------------------
     # Usuários
     # ------------------------------------------------------------------
-    def register(self, name: str, email: str, password: str) -> Tuple[Dict[str, Any], str]:
-        validate_registration(name, email, password)
-        email = (email or "").strip().lower()
+    def register(self, name: str, email: str, password: str, remember: bool = True) -> Tuple[Dict[str, Any], str]:
+        name, email, password = self._validate_registration(name, email, password)
         if self._row("auth_users", email=email):
             raise AuthError("Este e-mail já está cadastrado. Faça login.", 409)
         user_id = self._fresh_uid(name)
         record = {
             "id": user_id,
-            "name": (name or "").strip(),
+            "name": name,
             "email": email,
             "password_hash": AuthStore._hash_password(password),
             "role": "user",
             "created_at": _now_iso(),
         }
         self._t("auth_users").insert(record).execute()
-        self._maybe_promote(user_id, email)
-        return self._public(self._row("auth_users", id=user_id)) or {}, self._issue_token(user_id)
+        return self._public(self._row("auth_users", id=user_id)) or {}, self._issue_token(user_id, remember)
 
-    def login(self, email: str, password: str) -> Tuple[Dict[str, Any], str]:
-        email = (email or "").strip().lower()
+    def login(self, email: str, password: str, remember: bool = True) -> Tuple[Dict[str, Any], str]:
+        email = normalize_email(email)
         user = self._row("auth_users", email=email)
         if not user or not AuthStore._verify_password(password or "", user.get("password_hash", "")):
             raise AuthError("E-mail ou senha incorretos.", 401)
-        self._maybe_promote(user["id"], email)
-        return self._public(self._row("auth_users", id=user["id"])) or {}, self._issue_token(user["id"])
+        return self._public(self._row("auth_users", id=user["id"])) or {}, self._issue_token(user["id"], remember)
 
-    def oauth_login(self, provider: str, provider_id: str, email: str, name: str) -> Tuple[Dict[str, Any], str]:
-        email = (email or "").strip().lower()
-        user = self._row("auth_users", email=email)
-        if not user:
+    def oauth_login(
+        self,
+        provider: str,
+        provider_id: str,
+        email: str,
+        name: str,
+        email_verified: bool = True,
+    ) -> Tuple[Dict[str, Any], str]:
+        if not provider_id:
+            raise AuthError("O provedor não informou uma identidade válida.", 502)
+        email = normalize_email(email)
+        if not is_valid_email(email):
+            raise AuthError("O provedor não informou um e-mail válido.", 502)
+        if not email_verified:
+            raise AuthError("O e-mail do provedor não está verificado.", 403)
+        name = (name or "Novo usuário").strip()[:120] or "Novo usuário"
+        user = self._row("auth_users", oauth=provider, oauth_id=provider_id)
+        if user is None:
+            user = self._row("auth_users", email=email)
+            if user and not user.get("oauth_id"):
+                self._t("auth_users").update({"oauth": provider, "oauth_id": provider_id}).eq("id", user["id"]).execute()
+                user["oauth"], user["oauth_id"] = provider, provider_id
+        if user is None:
             user_id = self._fresh_uid(name)
             user = {
                 "id": user_id,
-                "name": (name or "Novo usuário").strip(),
+                "name": name,
                 "email": email,
                 "role": "user",
                 "oauth": provider,
@@ -180,26 +200,59 @@ class SupabaseAuthStore(AuthStore):
                 "created_at": _now_iso(),
             }
             self._t("auth_users").insert(user).execute()
-        elif not user.get("oauth_id"):
-            self._t("auth_users").update({"oauth": provider, "oauth_id": provider_id}).eq("id", user["id"]).execute()
-            user["oauth"], user["oauth_id"] = provider, provider_id
-        self._maybe_promote(user["id"], email)
         return self._public(self._row("auth_users", id=user["id"])) or {}, self._issue_token(user["id"])
 
     def is_admin(self, user_id: str) -> bool:
         user = self._row("auth_users", id=user_id)
         return bool(user) and user.get("role") == "admin"
 
+    def has_admin(self) -> bool:
+        return self.admin_count() > 0
+
     def admin_count(self) -> int:
         data = self._t("auth_users").select("role").eq("role", "admin").execute().data
         return len(data or [])
 
+    def bootstrap_admin(self, name: str, email: str, password: str) -> Tuple[Dict[str, Any], bool]:
+        """Cria o primeiro administrador ou promove a conta local definida."""
+        name, email, password = self._validate_registration(name, email, password)
+        if email != normalize_email(ADMIN_EMAIL):
+            raise AuthError(f"O e-mail do administrador inicial deve ser {ADMIN_EMAIL}.", 403)
+        if self.has_admin():
+            raise AuthError("Já existe uma conta ADM. Use a gestão de usuários para alterar roles.", 409)
+        user = self._row("auth_users", email=email)
+        if user:
+            if not user.get("password_hash") or not AuthStore._verify_password(password, user["password_hash"]):
+                raise AuthError("A senha da conta existente está incorreta.", 401)
+            self._t("auth_users").update({"role": "admin"}).eq("id", user["id"]).execute()
+            user["role"] = "admin"
+            return self._public(user) or {}, False
+        user_id = self._fresh_uid(name)
+        record = {
+            "id": user_id,
+            "name": name,
+            "email": email,
+            "password_hash": AuthStore._hash_password(password),
+            "role": "admin",
+            "created_at": _now_iso(),
+        }
+        self._t("auth_users").insert(record).execute()
+        return self._public(self._row("auth_users", id=user_id)) or {}, True
+
     def set_role(self, user_id: str, role: str) -> Optional[Dict[str, Any]]:
+        """Promove/rebaixa um usuário. Retorna o usuário público atualizado."""
         if role not in ("user", "admin"):
             raise AuthError("Role inválida. Use 'user' ou 'admin'.", 400)
         user = self._row("auth_users", id=user_id)
         if not user:
             return None
+        current_role = user.get("role")
+        if current_role == "admin" and role == "user" and self.admin_count() <= 1:
+            raise AuthError("Não é possível rebaixar o único administrador.", 409)
+        if current_role != "admin" and role == "admin" and self.has_admin():
+            raise AuthError("Já existe uma conta ADM. Não crie um segundo administrador.", 409)
+        if current_role == role:
+            return self._public(user)
         self._t("auth_users").update({"role": role}).eq("id", user_id).execute()
         user["role"] = role
         return self._public(user)

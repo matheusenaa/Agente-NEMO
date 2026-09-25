@@ -866,6 +866,8 @@ class RegisterRequest(BaseModel):
 
 @app.post("/api/auth/register")
 def register(req: RegisterRequest, request: Request, response: Response) -> Dict[str, Any]:
+    if os.environ.get("NEMO_OPEN_REGISTRATION", "1").strip() == "0":
+        raise HTTPException(status_code=403, detail="Cadastro aberto desativado. Peça acesso a um administrador.")
     try:
         user, token = AUTH_STORE.register(req.name, req.email, req.password, req.remember)
     except AuthError as exc:
@@ -899,6 +901,22 @@ def me(request: Request) -> Dict[str, Any]:
     if not user:
         raise HTTPException(status_code=401, detail="Sessão inválida ou expirada.")
     return {"ok": True, "user": user}
+
+
+class BootstrapRequest(BaseModel):
+    name: str = ""
+    email: str = ""
+    password: str = ""
+
+
+@app.post("/api/auth/bootstrap")
+def bootstrap(req: BootstrapRequest) -> Dict[str, Any]:
+    """Cria o primeiro administrador (e-mail ADMIN_EMAIL) ou promove a conta existente."""
+    try:
+        user, created = AUTH_STORE.bootstrap_admin(req.name, req.email, req.password)
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message)
+    return {"ok": True, "user": user, "created": created}
 
 
 # ---------------------------------------------------------------------------
@@ -1231,6 +1249,7 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
         user_key_providers = set()
 
     api_key = None
+    provider = "openrouter"  # catálogo da NEMO roda 100% via OpenRouter
     if provider not in configured_ids:
         try:
             api_key = DATA_STORE.get_api_key(user["id"], provider)
@@ -1250,7 +1269,6 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
         else:
             return _offline_no_provider(provider, req.agent, model)
 
-    fallback_chain = [p for p in configured_ids if p != provider][:2]
     fallback_slugs: List[str] = []
     mi = get_model_by_id(model)
     if mi:
@@ -1275,8 +1293,6 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
         messages=messages,
         temperature=req.temperature,
         max_tokens=req.max_tokens,
-        api_key=api_key,
-        fallback_providers=fallback_chain,
         fallback_slugs=fallback_slugs,
     )
     latency_ms = round((time.perf_counter() - started) * 1000, 1)

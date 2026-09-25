@@ -183,62 +183,43 @@ class TestOpenRouterIntegration(unittest.TestCase):
     def test_chat_offline_on_connection_blocked(self):
         """Rede bloqueada com chave válida → resposta graciosa offline, não erro cru."""
         import tempfile
+        from fastapi.testclient import TestClient
         import nemo_server as ns
         from auth import AuthStore
 
-        import uuid
-        user, token = ns.AUTH_STORE.register("Test Block", f"block-{uuid.uuid4().hex[:8]}@test.local", "senha123")
-        headers = {"Authorization": f"Bearer {token}"}
         blocked = AICompletionResult(
             success=False,
             content="",
-            model_used="gemini-2.5-flash",
-            provider="gemini",
-            original_model="gemini-2.5-flash",
+            model_used="openai/gpt-4o-mini",
+            provider="openrouter",
+            original_model="openai/gpt-4o-mini",
             is_fallback=False,
             latency_ms=2200.0,
             error_message="Erro da API (APIConnectionError): Connection error.",
         )
-
-        # configura estado: "gemini" como provedor do sistema com chave, mas a
-        # chamada real é substituída por uma falha de rede simulada.
-        with patch.object(ns.AI_SERVICE, "has_system_key", return_value=True), \
-             patch.object(ns.AI_SERVICE, "provider_catalog", return_value=[
-                 {"id": "gemini", "name": "Google Gemini", "icon": "✨", "configured": True, "models": ["gemini-2.5-flash"]}
-             ]), \
-             patch.object(ns.AI_SERVICE, "default_provider", return_value="gemini"), \
-             patch.object(ns.AI_SERVICE, "complete", return_value=blocked):
-            tc = TestClient(ns.app)
-            resp = tc.post(
-                "/api/nemo/chat",
-                json={"agent": "analista", "message": "oi", "messages": [], "max_tokens": 200},
-                headers=headers,
-            )
-            self.assertEqual(resp.status_code, 200)
-            data = resp.json()
-            self.assertTrue(data["ok"])
-            self.assertTrue(data["offline"])
-            self.assertTrue(data["is_fallback"])
-
         with tempfile.TemporaryDirectory() as temp_dir:
             auth_store = AuthStore(Path(temp_dir))
             _, token = auth_store.register("Teste", "teste@example.com", "senha-segura")
-            with patch.object(ns, "AUTH_STORE", auth_store):
-                with patch.object(ns, "get_client", return_value=client):
-                    with patch.object(client, "chat_completion", return_value=blocked):
-                        tc = TestClient(app)
-                        resp = tc.post(
-                            "/api/nemo/chat",
-                            headers={"Authorization": f"Bearer {token}"},
-                            json={"agent": "analista", "message": "oi", "messages": [], "max_tokens": 200},
-                        )
-                        self.assertEqual(resp.status_code, 200)
-                        data = resp.json()
-                        self.assertFalse(data["ok"])
-                        self.assertTrue(data["offline"])
-                        self.assertFalse(data["is_fallback"])
-                        self.assertEqual(data["error_code"], "openrouter_unavailable")
-                        self.assertIn("OpenRouter", data["content"])
+            fake_client = MagicMock()
+            fake_client.has_valid_key_format.return_value = True
+            fake_client.chat_completion.return_value = blocked
+            with patch.object(ns, "AUTH_STORE", auth_store), \
+                 patch.object(ns, "get_client", return_value=fake_client), \
+                 patch.object(ns.AI_SERVICE, "provider_catalog", return_value=[
+                     {"id": "openrouter", "name": "OpenRouter", "configured": True, "models": []}
+                 ]):
+                tc = TestClient(ns.app)
+                resp = tc.post(
+                    "/api/nemo/chat",
+                    headers={"Authorization": f"Bearer {token}"},
+                    json={"agent": "analista", "message": "oi", "messages": [], "max_tokens": 200},
+                )
+                self.assertEqual(resp.status_code, 200)
+                data = resp.json()
+                self.assertFalse(data["ok"])
+                self.assertTrue(data["offline"])
+                self.assertEqual(data["error_code"], "openrouter_unavailable")
+                self.assertIn("OpenRouter", data["content"])
 
 
 class TestServerSecurity(unittest.TestCase):

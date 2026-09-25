@@ -9,7 +9,7 @@ e que nenhuma chave bruta aparece nas respostas da API.
 import sys
 import uuid
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -30,6 +30,14 @@ def _ok_result(provider: str, model: str, content: str = "resposta simulada"):
     )
 
 
+def _chat_client(model: str = "openai/gpt-4o-mini", result=None):
+    """Cliente OpenRouter falso para o endpoint /api/nemo/chat."""
+    client = MagicMock()
+    client.has_valid_key_format.return_value = True
+    client.chat_completion.return_value = result or _ok_result("openrouter", model)
+    return client
+
+
 class TestMultiuserIsolation(unittest.TestCase):
 
     @classmethod
@@ -42,13 +50,8 @@ class TestMultiuserIsolation(unittest.TestCase):
         user, token = ns.AUTH_STORE.register(name, email, "senha123")
         return {"Authorization": f"Bearer {token}"}
 
-    def _chat_ok(self, headers, agent="nemo", provider="gemini", model="gemini-2.5-flash"):
-        with patch.object(ns.AI_SERVICE, "provider_catalog", return_value=[
-            {"id": "gemini", "name": "Gemini", "icon": "✨", "configured": True, "models": [model]},
-            {"id": "groq", "name": "Groq", "icon": "⚡", "configured": True, "models": [model]},
-        ]), patch.object(ns.AI_SERVICE, "has_system_key", return_value=True), \
-             patch.object(ns.AI_SERVICE, "default_provider", return_value=provider), \
-             patch.object(ns.AI_SERVICE, "complete", return_value=_ok_result(provider, model)):
+    def _chat_ok(self, headers, agent="nemo"):
+        with patch.object(ns, "get_client", return_value=_chat_client()):
             return self.tc.post("/api/nemo/chat",
                                 json={"agent": agent, "message": "oi", "messages": [], "max_tokens": 200},
                                 headers=headers)
@@ -70,7 +73,7 @@ class TestMultiuserIsolation(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         masked_a = r.json()["masked"]
         self.assertTrue(masked_a.startswith("**") and masked_a.endswith("7890"))
-        with patch.object(ns.AI_SERVICE, "provider_catalog", return_value=[]):
+        with patch.object(ns, "get_client", return_value=_chat_client("openai/gpt-4o-mini")):
             self.tc.post("/api/nemo/chat", json={"agent": "nemo", "message": "leo", "messages": []}, headers=hA)
 
         # A confirma que vê tudo
@@ -126,10 +129,10 @@ class TestMultiuserIsolation(unittest.TestCase):
             ns.AI_RATE_LIMITER = old_limiter
 
     def test_per_agent_ai_config(self):
-        """Override de provedor/modelo por agente (§40), com prioridade correta."""
+        """Modelo do chat: request explícito > defaultModel do agente > padrão da categoria."""
         hA = self._register("Usuário Agente", "agtA")
 
-        # Salva padrão gemini + override do agente 'nemo' para groq
+        # Salva settings (round-trip das configurações de IA por usuário)
         r = self.tc.post("/api/nemo/ai/config", json={
             "default_provider": "gemini",
             "default_model": "gemini-2.5-flash",
@@ -137,41 +140,31 @@ class TestMultiuserIsolation(unittest.TestCase):
         }, headers=hA)
         self.assertEqual(r.status_code, 200, r.text)
 
-        called = {}
+        calls = []
 
-        def fake_complete(**kwargs):
-            called.update(kwargs)
-            return _ok_result(kwargs.get("provider", ""), kwargs.get("model", ""), "resposta simulada")
+        def fake_chat(**kwargs):
+            calls.append(kwargs["model"])
+            return _ok_result("openrouter", kwargs.get("model") or "openai/gpt-4o-mini")
 
-        with patch.object(ns.AI_SERVICE, "provider_catalog", return_value=[
-            {"id": "gemini", "name": "Gemini", "icon": "✨", "configured": True, "models": ["gemini-2.5-flash"]},
-            {"id": "groq", "name": "Groq", "icon": "⚡", "configured": True, "models": ["llama-3.3-70b-versatile"]},
-        ]), patch.object(ns.AI_SERVICE, "has_system_key", return_value=True), \
-             patch.object(ns.AI_SERVICE, "complete", side_effect=fake_complete):
-            # agent 'nemo' usa o override
+        client = _chat_client()
+        client.chat_completion.side_effect = fake_chat
+        with patch.object(ns, "get_client", return_value=client):
             r = self.tc.post("/api/nemo/chat",
                              json={"agent": "nemo", "message": "oi", "messages": []}, headers=hA)
             self.assertEqual(r.status_code, 200, r.text)
-            self.assertEqual(called["provider"], "groq")
-            self.assertEqual(called["model"], "llama-3.3-70b-versatile")
 
-            # outro agente usa o padrão do usuário
-            r = self.tc.post("/api/nemo/chat",
-                             json={"agent": "parceiro", "message": "oi", "messages": []}, headers=hA)
-            self.assertEqual(r.status_code, 200, r.text)
-            self.assertEqual(called["provider"], "gemini")
-            self.assertEqual(called["model"], "gemini-2.5-flash")
-
-            # request explícito TEM prioridade sobre o override do agente
+            # request explícito TEM prioridade sobre o modelo do agente
             r = self.tc.post("/api/nemo/chat", json={
                 "agent": "nemo", "message": "oi", "messages": [],
-                "provider": "openrouter", "model": "deepseek/deepseek-chat",
+                "model": "deepseek/deepseek-chat",
             }, headers=hA)
             self.assertEqual(r.status_code, 200, r.text)
-            self.assertEqual(called["provider"], "openrouter")
-            self.assertEqual(called["model"], "deepseek/deepseek-chat")
 
-        # remoção do override
+        expected_default = (ns._agent_persona("nemo") or {}).get("defaultModel") or ns.CATEGORY_MODEL_DEFAULT
+        self.assertEqual(calls[0], expected_default)
+        self.assertEqual(calls[1], "deepseek/deepseek-chat")
+
+        # remoção do override (as settings continuam gerenciáveis)
         r = self.tc.post("/api/nemo/ai/config", json={"agent_overrides": {"nemo": {}}}, headers=hA)
         self.assertEqual(r.status_code, 200, r.text)
         cfg = self.tc.get("/api/nemo/ai/config", headers=hA).json()
@@ -181,11 +174,7 @@ class TestMultiuserIsolation(unittest.TestCase):
         """Actividade de chat grava tokens (§34) e é isolada por usuário."""
         hA = self._register("Usuário Tokens", "tokA")
         hB = self._register("Outro Tokens", "tokB")
-        with patch.object(ns.AI_SERVICE, "provider_catalog", return_value=[
-            {"id": "gemini", "name": "Gemini", "icon": "✨", "configured": True, "models": ["gemini-2.5-flash"]},
-        ]), patch.object(ns.AI_SERVICE, "has_system_key", return_value=True), \
-             patch.object(ns.AI_SERVICE, "default_provider", return_value="gemini"), \
-             patch.object(ns.AI_SERVICE, "complete", return_value=_ok_result("gemini", "gemini-2.5-flash")):
+        with patch.object(ns, "get_client", return_value=_chat_client("openai/gpt-4o-mini")):
             r = self.tc.post("/api/nemo/chat", json={"agent": "analista", "message": "oi", "messages": []}, headers=hA)
         self.assertEqual(r.status_code, 200, r.text)
 
