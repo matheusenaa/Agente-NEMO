@@ -62,20 +62,19 @@ class CompletionResult:
 # ---------------------------------------------------------------------------
 
 GEMINI_MODELS: List[str] = [
-    "gemini-2.5-pro",
+    "gemini-flash-latest",
     "gemini-2.5-flash",
     "gemini-2.0-flash",
+    "gemini-pro-latest",
+    "gemini-2.5-pro",
     "gemini-1.5-pro",
     "gemini-1.5-flash",
 ]
 
 GROQ_MODELS: List[str] = [
-    "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
-    "llama-3.2-3b-preview",
-    "mixtral-8x7b-32768",
-    "qwen-2.5-32b",
-    "gemma2-9b-it",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.8-27b",
 ]
 
 OPENAI_MODELS: List[str] = [

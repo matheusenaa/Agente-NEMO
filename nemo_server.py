@@ -98,7 +98,7 @@ from pydantic import BaseModel
 from openrouter_client import OpenRouterClient
 from models_config import OPENROUTER_MODELS, get_model_by_id, get_all_models
 from auth import AuthError, AuthStore, make_auth_store
-from ai_providers import AIProviderService, PROVIDER_META
+from ai_providers import AIProviderService, PROVIDER_META, GEMINI_MODELS, GROQ_MODELS, OPENAI_MODELS
 from ai_keys import KeyStore, KeyStoreError, mask_key, looks_like_placeholder
 from web_search import WebSearchService, WebSearchError
 from data_store import make_data_store
@@ -350,6 +350,21 @@ def _discover_agents() -> List[Dict[str, Any]]:
             "defaultModel": CATEGORY_MODEL_MAP.get(category, CATEGORY_MODEL_DEFAULT),
         })
     return agents
+
+
+def _coerce_model_for_provider(provider: str, model: str) -> str:
+    """Se o modelo resolvido não pertence ao catálogo do provedor escolhido
+    (ex.: slug OpenRouter herdado do padrão da categoria), usa o modelo-padrão
+    atual do provedor para não chamar com nome inexistente."""
+    catalog: Dict[str, List[str]] = {
+        "groq": GROQ_MODELS,
+        "gemini": GEMINI_MODELS,
+        "openai": OPENAI_MODELS,
+    }
+    known = catalog.get(provider, [])
+    if known and model and model not in known and "/" in model:
+        return known[0]
+    return model
 
 
 def _agent_persona(agent_id: str) -> Optional[Dict[str, Any]]:
@@ -1035,6 +1050,7 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
              or agent_override.get("model")
              or settings.get("default_model")
              or agent.get("defaultModel") or CATEGORY_MODEL_DEFAULT)
+    model = _coerce_model_for_provider(provider, model)
 
     # --- Ferramentas (missão §22/23) e busca condicional (missão §21) --------
     tools = AGENT_TOOLS.get(agent["id"], [])
