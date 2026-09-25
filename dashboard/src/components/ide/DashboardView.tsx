@@ -1,6 +1,7 @@
-﻿import { useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { useIdeStore } from "@/store/useIdeStore";
 import { useSquadStore } from "@/store/useSquadStore";
+import { nemoApi } from "@/api/nemo";
 import { AGENT_ROSTER, getAgent } from "@/data/agents";
 import type { ViewId } from "@/types/idea";
 import { eventSortDate } from "@/lib/calendar";
@@ -8,8 +9,20 @@ import { AgentAvatar } from "@/components/AgentAvatar";
 import { categoryMeta } from "./EventModal";
 import { pickPhrase } from "@/data/statusPhrases";
 
+interface AiHealth {
+  providers_configured: { id: string; name: string; icon: string }[];
+  default_provider: string;
+  default_model?: string;
+  web_search: string[];
+  store_backend: string;
+}
+
 export function DashboardView() {
   const [emptyEventPhrase] = useState(() => pickPhrase(["Que tal agendar algo?", "Agende o próximo passo."], ""));
+  const [ai, setAi] = useState<AiHealth | null>(null);
+  useEffect(() => {
+    nemoApi.health().then((h) => setAi((h as unknown as { ai?: AiHealth }).ai ?? null)).catch(() => undefined);
+  }, []);
   const setView = useIdeStore((s) => s.setView);
   const setActiveAgent = useIdeStore((s) => s.setActiveAgent);
   const liveStatus = useIdeStore((s) => s.liveStatus);
@@ -117,6 +130,11 @@ export function DashboardView() {
           <div className="stat-ico">🔔</div>
           <div className="stat-num">{notifications.length}</div>
           <div className="stat-label">Notificações</div>
+        </div>
+        <div className="stat-card" onClick={() => go("settings")}>
+          <div className="stat-ico">🤖</div>
+          <div className="stat-num">{ai?.providers_configured?.length ?? 0}</div>
+          <div className="stat-label">Provedores de IA</div>
         </div>
       </div>
 
@@ -252,6 +270,31 @@ export function DashboardView() {
                 </button>
               );
             })}
+          </div>
+
+          <div className="card-tt">🤖 IA ativa</div>
+          <div className="dash-ai">
+            {ai && ai.providers_configured.length > 0 ? (
+              <>
+                {ai.providers_configured.map((p) => (
+                  <div key={p.id} className="dash-ai-row">
+                    <span className="dash-ai-dot" style={{ background: p.id === ai.default_provider ? "var(--ok)" : "var(--border2)" }} />
+                    <span style={{ flex: 1 }}>{p.icon} {p.name}</span>
+                    {p.id === ai.default_provider && <span className="status-pill" style={{ color: "var(--ok)", borderColor: "var(--ok)" }}>padrão</span>}
+                  </div>
+                ))}
+                <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 8 }}>
+                  Banco: <b>{ai.store_backend === "supabase" ? "🟢 Supabase" : "local (_data)"}</b> · Busca web: {ai.web_search.join(", ") || "—"}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 4 }}>
+                  Modelo padrão: <b>{ai.default_model || "—"}</b>
+                </div>
+              </>
+            ) : (
+              <div className="dash-empty" style={{ margin: 0 }}>
+                Nenhuma chave de IA configurada — o NEMO responderá offline. Configure em ⚙️ Configurações.
+              </div>
+            )}
           </div>
 
           <div className="card-tt">🪵 Atividade recente</div>

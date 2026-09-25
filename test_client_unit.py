@@ -17,6 +17,7 @@ from openai import NotFoundError, RateLimitError
 
 from models_config import get_all_models, get_model_by_id, ModelInfo
 from openrouter_client import OpenRouterClient, CompletionResult
+from ai_providers import CompletionResult as AICompletionResult
 from nemo_server import _is_auth_error, _is_connection_error
 
 class TestOpenRouterIntegration(unittest.TestCase):
@@ -185,19 +186,39 @@ class TestOpenRouterIntegration(unittest.TestCase):
         import nemo_server as ns
         from auth import AuthStore
 
-        client = OpenRouterClient(api_key="sk-or-v1-mocked-key-for-testing")
-        blocked = CompletionResult(
+        import uuid
+        user, token = ns.AUTH_STORE.register("Test Block", f"block-{uuid.uuid4().hex[:8]}@test.local", "senha123")
+        headers = {"Authorization": f"Bearer {token}"}
+        blocked = AICompletionResult(
             success=False,
             content="",
-            model_used="deepseek/deepseek-chat",
-            original_model="deepseek/deepseek-chat",
+            model_used="gemini-2.5-flash",
+            provider="gemini",
+            original_model="gemini-2.5-flash",
             is_fallback=False,
             latency_ms=2200.0,
-            error_message="Erro da API OpenRouter (APIConnectionError): Connection error.",
+            error_message="Erro da API (APIConnectionError): Connection error.",
         )
 
-        from fastapi.testclient import TestClient
-        from nemo_server import app
+        # configura estado: "gemini" como provedor do sistema com chave, mas a
+        # chamada real é substituída por uma falha de rede simulada.
+        with patch.object(ns.AI_SERVICE, "has_system_key", return_value=True), \
+             patch.object(ns.AI_SERVICE, "provider_catalog", return_value=[
+                 {"id": "gemini", "name": "Google Gemini", "icon": "✨", "configured": True, "models": ["gemini-2.5-flash"]}
+             ]), \
+             patch.object(ns.AI_SERVICE, "default_provider", return_value="gemini"), \
+             patch.object(ns.AI_SERVICE, "complete", return_value=blocked):
+            tc = TestClient(ns.app)
+            resp = tc.post(
+                "/api/nemo/chat",
+                json={"agent": "analista", "message": "oi", "messages": [], "max_tokens": 200},
+                headers=headers,
+            )
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertTrue(data["ok"])
+            self.assertTrue(data["offline"])
+            self.assertTrue(data["is_fallback"])
 
         with tempfile.TemporaryDirectory() as temp_dir:
             auth_store = AuthStore(Path(temp_dir))

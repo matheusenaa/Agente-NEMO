@@ -3,6 +3,8 @@
 **Data original:** 2026-09-18  
 **Atualização (missão 2 — interface+estabilidade):** 2026-09-19  
 **Atualização (missão 6 — escritório estável, perfis USER/ADMIN e login Google/OAuth):** 2026-09-24  
+**Atualização (missão 7 — integração Supabase + Gemini + Groq + IA do usuário):** 2026-09-24  
+**Atualização (missão 60 — rate limit §35, tokens §34, config por agente §40, isolamento §56, auditoria §57):** 2026-09-24  
 **Projeto:** NEMO IDE / Open Squad Dashboard  
 **Repositório:** https://github.com/matheusenaa/Agente-NEMO (público, branch `main`)  
 **Executável:** `dist/NEMO_IDE/NEMO_IDE.exe` (23 MB, PyInstaller)  
@@ -521,3 +523,115 @@ O **NEMO IDE / Open Squad Dashboard** está **completo, testado e empacotado** c
 - **Executável standalone** (23 MB) **corrigido** — volta a enxergar agentes/squads/dashboard no modo frozen
 
 > **Pronto para uso e distribuição.** Basta copiar `dist/NEMO_IDE/`, configurar `.env` com uma chave OpenRouter nova e rodar `NEMO_IDE.exe`.
+
+---
+
+## 15. ANEXO — Missão 7: Integração Supabase + Gemini + Groq + IA do Usuário
+
+**Data:** 2026-09-24 · **Pendências do usuário:** ainda **não há** projeto Supabase, chave Gemini nem chave Groq → conforme a missão §60, **nenhuma credencial foi inventada**; tudo foi construído configurável e degrada graciosamente.
+
+### 15.1 Entregas
+
+| Entregável | Arquivo | Evidência |
+|-----------|---------|-----------|
+| Camada abstrata de IA (Gemini, Groq, OpenAI, OpenRouter) | `ai_providers.py` (novo) | `AIProviderService` + `CompletionResult`; catálogo `PROVIDER_META`; fallbacks limitados em `MAX_FALLBACKS=3` (missão §33) |
+| Cofre de API Keys do usuário | `ai_keys.py` (novo) | **Fernet** (AES-128-CBC) derivado de `AUTH_SECRET`; só máscara no frontend; `mask_key`/`looks_like_placeholder` |
+| Busca na web multi-provedor | `web_search.py` (novo) | DuckDuckGo **sem chave** (padrão), Tavily/Brave se configurados; rate-limit por usuário; busca **condicional** (`_needs_search`) |
+| Camada de dados (Supabase ↔ local) | `data_store.py` (novo) | `DataStore` → `SupabaseStore` (service role, `user_id` em toda query) ou `LocalStore` (JSON `_data/users/<id>/`) |
+| Schema + RLS Supabase | `supabase/migrations/001_schema_init.sql` (novo) | 12 tabelas (conversations, messages, agent_memories, tasks, ai_providers, user_ai_keys, ai_settings, web_searches, activity_logs, …), policies exigindo `auth.uid() = user_id`, trigger de profile |
+| Backend multi-provedor | `nemo_server.py` | chat reescrito (provedor resolução usuário>sistema>agente); `/api/nemo/ai/config`, `/api/nemo/ai/keys` (POST/DELETE), `/api/nemo/ai/test`, `/api/nemo/ai/search`, `/api/nemo/ai/memories`; `/api/nemo/conversations`; `/api/nemo/tasks`; health com bloco `ai` |
+| UI Central de IA | `dashboard/src/components/ide/AiSettingsCard.tsx` (novo) + `SettingsView.tsx` + `DashboardView.tsx` + `api/nemo.ts` + tipos | provedor/modelo padrão, chave mascarada com salvar/testar/remover, status backend/store/criptografia; card "IA ativa" no Painel |
+| Dependências/env | `requirements.txt` (+`cryptography`, +`supabase`); `.env.example` (provedores, busca, Supabase) | instaladas e ativas (encryption=True) |
+| Testes | `test_ai_providers.py`, `test_ai_keys.py`, `test_web_search.py`, `test_data_store.py` (novos) + `test_client_unit.py` (atualizado) | **49 testes, todos OK** (1 skip: "sem cryptography" — biblioteca instalada) |
+| Docs | `README.md`, `supabase/README.md`, este anexo | passo a passo de ativação |
+
+### 15.2 Smoke test real (TestClient, sem credenciais inventadas)
+
+- `GET /api/nemo/ai/config` → 200 com `providers` (4), `web_search: [duckduckgo]`, `store_backend: local`, `encryption: true`
+- `POST /api/nemo/ai/config` (default_provider gemini) → 200
+- `POST /api/nemo/ai/keys` (chave de teste sintética) → 200, **máscara `****…7890`**, `verified:false`, teste real contra Gemini respondeu 400 graciosamente (nenhuma quebra); arquivo `ai_keys.json` **não contém a chave em texto puro**
+- `/api/nemo/ai/memories` e `/api/nemo/tasks` → 200 listagem/inserção
+
+### 15.3 Decisões (missão §44 e segurança)
+
+1. Backend filtra **tudo** por `user_id` mesmo com Supabase (frontend não confiável) + RLS no banco.
+2. Chaves criptografadas em repouso **antes** da camada de dados; nunca em logs/Git/response payload (só máscara).
+3. Sem nenhuma chave → chat responde **offline gracioso** orientando configuração (`Configurações → Inteligência Artificial` ou `.env`), preservando todo o resto da IDE.
+4. Fallback entre provedores limitado a 3 tentativas; busca web condicional e com rate-limit.
+
+### 15.4 Pendências (requerem credenciais/ambiente do usuário)
+
+1. Criar **projeto Supabase** (guia em `supabase/README.md`) e preencher `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` → `store_backend` muda para `supabase`.
+2. Opcional: `GEMINI_API_KEY` / `GROQ_API_KEY` no `.env` (ou pela UI, criptografada por usuário) → chat multi-provedor real.
+3. Validar fluxo completo em ambiente com internet (esta rede INEP bloqueia vários hosts externos).
+4. Revogar/expor a chave OpenRouter antiga do `.env` quando convenient (ela **não** está em Git).
+
+---
+
+## 16. ANEXO — Missão 60: rate limit, tokens, configuração por agente, isolamento
+
+**Data:** 2026-09-24 · **Status:** implementado e testado (54 testes OK, 1 skip esperado). Credenciais Supabase/Gemini/Groq continuam pendentes do usuário (nada foi inventado).
+
+### 16.1 Entregas
+
+| Seção da missão | Entregável | Evidência |
+|-----------------|-----------|-----------|
+| §34 Custos/tokens | `activity_logs` ganhou `prompt_tokens`, `completion_tokens`, `total_tokens` (SQL + interface + LocalStore + SupabaseStore); `_log_activity` repassa os tokens do `CompletionResult` | chat real grava custos; `GET /api/nemo/ai/activity` expõe |
+| §35 Rate limit por usuário | `_SlidingWindowRateLimit` (janela 60s) + `AI_RATE_LIMITER` + env `NEMO_AI_RATE_LIMIT` (padrão 30/min) em `nemo_server.py` | chat responde `rate_limited: True` + mensagem amigável sem quebrar a UI |
+| §40 Config por agente | `agent_overrides` no `AiSettingsRequest` (merge/remove); resolução no chat: requisição > agente > usuário > sistema; UI nova "Configuração por agente" no `AiSettingsCard` | teste confirma prioridades e remoção |
+| §56 Isolamento multiusuário | `test_multiuser.py` verifica que dados/chaves/atividade do usuário A jamais aparecem para B (conversas, tasks, memórias, chaves, activity) | verde |
+| §57 Auditoria de chaves | `git grep` nos arquivos rastreados → apenas chaves sintéticas de testes/docs; `.env` e `_data/` fora do versionamento; respostas só máscara | verde |
+| Frontend | `saveAiConfig` aceita `agent_overrides`; tipo `AiConfigResponse.settings.agent_overrides`; UI de override por agente | build OK (96 módulos, ~25s) |
+| Docs | `README.md` (rate limit, overrides, tokens, isolamento, `NEMO_AI_RATE_LIMIT`), este anexo, linha de data no cabeçalho | — |
+| Testes | `test_multiuser.py` (isolamento + chaves + rate limit + overrides + tokens) | **54 testes, OK** |
+
+### 16.2 Decisões técnicas
+
+1. Rate limit usa **semáforo+janela deslizante** por `user_id` (não por IP) — correto para app multi-usuário autenticado; `_hits` em memória (retorna a zero no restart, aceitável).
+2. Overrides por agente são **merge** na persistência (não destroem configs de outros agentes); envio de objeto vazio **remove** o override.
+3. Tokens são gravados com `default 0` no banco — entrada sem tokens não quebra quadros/agregações existentes.
+4. Auditoria contínua: nenhum segredo além da máscara chega ao frontend; service role/anon nunca no cliente.
+
+### 16.3 Pendências (credendiais do usuário)
+
+Na `Central de IA` → "Minhas API Keys", salve por usuário: **Gemini** (aistudio.google.com/apikey), **Groq** (console.groq.com/keys) e, para Supabase, rode `supabase/migrations/001_schema_init.sql` no SQL Editor e preencha `SUPABASE_URL`/`SUPABASE_ANON_KEY`/`SUPABASE_SERVICE_ROLE_KEY` no `.env`. Depois de ativar, rodar o teste ao vivo (chat real Gemini/Groq).
+
+### 16.4 Validação ao vivo (credendiais do usuário — finalizado)
+
+**Data:** 2026-09-24 · usuário forneceu Gemni (token `AQ…`), Groq (`gsk_…`) e Supabase project `yecdnbsljsroxcikcbpw` (`sb_secret…`).
+
+| Item | Resultado |
+|------|-----------|
+| ✨ **Gemini** | chave válida; **contas novas** não têm `gemini-2.x` → catálogo prioriza `gemini-flash-latest` (testado OK: 315 tokens) |
+| ⚡ **Groq** | chave válida; `llama-3.x` viraram Enterprise → catálogo usa `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `qwen/qwen3.8-27b` (validados; 284/321 tokens) |
+| 🗄️ **Supabase** | `001_schema_init.sql` executado no SQL Editor (Management API é read-only p/ DDL); `user_id` ajustado para **text** (auth local do NEMO) com RLS `auth.uid()::text = user_id`; `ai_settings.agent_overrides jsonb`; datas de tasks convertidas ms↔timestamptz; agregado `messages(count)` corrigido |
+| 🧪 **Testes** | **54 OK** (1 skip) — `test_multiuser.py` rodou contra o **Postgres real** (isolamento A/B), `test_data_store` resiliente a `.env` com Supabase |
+| 🔄 **Chat ao vivo p/ supabase** | pergunta real → resposta correta, conversa+atividade+tokens persistidos no banco |
+| 🔒 **Auditoria** | `git grep` rastreado sem segredos reais (`gsk_/AIza/AQ/sb_secret` só em `.env` ignorado e em mocks de teste; token `sbp_` usado só em execução transitória, não versionado) |
+
+### 16.5 Pendências restantes da missão — executadas
+
+**Data:** 2026-09-24 · commits `cffa657` (anteriores) e este (pendências §26/§8/§38).
+
+| Item | O que foi feito | Validação |
+|------|------------------|-----------|
+| 🗂️ **§26 Histórico de conversas** | `DELETE /api/nemo/conversations/{id}` (exclui conversa + mensagens via cascade, 404 se não pertence ao usuário); `GET /api/nemo/conversations?q=` busca no **título e no conteúdo**; `GET /{id}/messages` para reabrir; painel `📚` no chat com buscar/reabrir/apagar/"Nova conversa" | teste novo `test_mission_features` (busca `?q=cloud`, delete 200→404, isolamento A/B) + build do dashboard |
+| 👤 **§8 Perfil do usuário** | `GET/POST /api/nemo/profile` (nome, idioma, avatar) → tabela `profiles` (mapeia `avatar`→`avatar_url`) no Supabase / `profile.json` local; cartão "👤 Perfil" em Configurações com preview, idioma e avatares | roundtrip POST/GET ao vivo + teste; build frontend |
+| 💡 **§38 Health** | `GET /api/nemo/health → ai.default_model` via novo `AIService.default_provider_model()`; dashboard mostra "IA ativa", provedor padrão e **modelo padrão** (`openai/gpt-oss-120b`/Groq) | teste de health + ao vivo |
+| 🧪 **Testes** | `test_mission_features.py` (4 testes: perfil, busca+exclusão, isolamento, health) rodando contra o **Supabase real** | suíte completa **58 OK (1 skip)** |
+| 📚 **Docs** | README atualizado (endpoints, perfil, busca/exclusão de conversas, default_model) + esta seção | — |
+
+### 16.6 Administração e persistência de contas (ADMIN + Supabase auth)
+
+**Data:** 2026-09-25 · motivação do usuário: "colocar minha conta como ADM, configurar outras contas e não precisar ficar criando conta a cada acesso".
+
+| Item | O que foi feito | Validação |
+|------|------------------|-----------|
+| 👤 **Bootstrap ADMIN** | `NEMO_ADMIN_EMAIL` no `.env`: ao registrar/logar com o e-mail, a conta vira `admin` automaticamente (nos dois backends) | ao vivo: registro com o e-mail → `role: admin` no `/auth/me` |
+| 🛡️ **Painel ADMIN** | `GET/POST /api/admin/users`, `PUT /api/admin/users/role`, `PUT /api/admin/users/{id}/password`; frontend: card "🛡️ Usuários" em Configurações (listar, criar conta, promover/rebaixar, redefinir senha) | testes `test_admin` (4): não-admin 403, CRUD completo, guarda do último admin (400), cadastro aberto desativável |
+| 🗄️ **Contas no Supabase** | migration `002_auth_tables.sql`: `auth_users` + `auth_sessions` (service role; RLS sem policies = anon negado); `SupabaseAuthStore` replica a API do `AuthStore` (`auth_supabase.py`); sem Supabase, fallback local intacto | ao vivo: sessão resolve num store novo ("restart"); smoke completo (PRINT 1..9) |
+| 🔒 **Login persistente** | sessões de 7 dias gravadas no banco → token continua válido após restart/redeploy (antes: só em memória) | `test_sessions_persist_across_store_restart` |
+| 🚪 **Cadastro opcional** | `NEMO_OPEN_REGISTRATION=0` desativa registro aberto (só admin cria) | teste cobre o 403 |
+| 🧪 **Testes** | suíte completa | **62 OK (1 skip)** — auth agora contra o Supabase real |
+
+---

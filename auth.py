@@ -133,6 +133,21 @@ class AuthError(Exception):
         self.message = message
 
 
+ADMIN_BOOTSTRAP_EMAIL = os.getenv("NEMO_ADMIN_EMAIL", "").strip().lower()
+
+
+def validate_registration(name: str, email: str, password: str) -> None:
+    """Validação comum a register e criação por admin (nos dois backends)."""
+    name = (name or "").strip()
+    email = (email or "").strip().lower()
+    if not name or len(name) < 2:
+        raise AuthError("Informe seu nome (mínimo 2 letras).", 400)
+    if not email or "@" not in email or "." not in email:
+        raise AuthError("Informe um e-mail válido.", 400)
+    if not password or len(password) < 6:
+        raise AuthError("A senha deve ter pelo menos 6 caracteres.", 400)
+
+
 class AuthStore:
     def __init__(self, root: Path):
         self.root = root
@@ -453,6 +468,56 @@ class AuthStore:
         with self._lock:
             return [self._public_user(user) for user in self._users.values()]
 
+    def create_user(self, name: str, email: str, password: str, role: str = "user") -> Dict[str, Any]:
+        """Cria uma conta pelo ADMIN (não emite sessão)."""
+        validate_registration(name, email, password)
+        email = (email or "").strip().lower()
+        if any(u.get("email") == email for u in self._users.values()):
+            raise AuthError("Este e-mail já está cadastrado.", 409)
+        user_id = "u_" + secrets.token_hex(4) + "_" + "".join(c for c in name.lower() if c in USERNAME_RE)[:8] or "_user"
+        while user_id in self._users:
+            user_id = "u_" + secrets.token_hex(4)
+        record = {
+            "id": user_id,
+            "name": (name or "").strip(),
+            "email": email,
+            "password_hash": self._hash_password(password),
+            "role": role if role in ("user", "admin") else "user",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._users[user_id] = record
+        self._save()
+        return {k: v for k, v in record.items() if k != "password_hash"}
+
+    def reset_password(self, user_id: str, password: str) -> Optional[Dict[str, Any]]:
+        user = self._users.get(user_id)
+        if not user or not password or len(password) < 6:
+            raise AuthError("A senha deve ter pelo menos 6 caracteres.", 400)
+        user["password_hash"] = self._hash_password(password)
+        self._save()
+        return {k: v for k, v in user.items() if k != "password_hash"}
+
+    def delete_user(self, user_id: str) -> bool:
+        """Remove um usuário (usado pelo admin/limpeza). False se não existir."""
+        if user_id not in self._users:
+            return False
+        del self._users[user_id]
+        self._save()
+        for token, sess in list(self.sessions.items()):
+            if sess.get("user_id") == user_id:
+                self.sessions.pop(token, None)
+        return True
+
+    def admin_count(self) -> int:
+        return sum(1 for u in self._users.values() if u.get("role") == "admin")
+
+    def _maybe_promote(self, user: Dict[str, Any]) -> None:
+        """Bootstrap: NEMO_ADMIN_EMAIL registrado/logado vira admin automaticamente."""
+        if ADMIN_BOOTSTRAP_EMAIL and user.get("email") and user["email"].lower() == ADMIN_BOOTSTRAP_EMAIL:
+            if user.get("role") != "admin":
+                user["role"] = "admin"
+                self._save()
+
     def user_dir(self, user_id: str) -> Path:
         """Diretório de dados do usuário (área privada)."""
         if not USER_ID_RE.fullmatch(user_id or ""):
@@ -520,4 +585,13 @@ class AuthStore:
 
 
 def make_auth_store(root: Path) -> AuthStore:
+    """Supabase (usuários/sessões no banco) quando configurado; senão AuthStore local."""
+    try:
+        from auth_supabase import SupabaseAuthStore
+
+        sb = SupabaseAuthStore(root)
+        if sb.enabled:
+            return sb
+    except Exception:
+        pass
     return AuthStore(root)
