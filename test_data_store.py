@@ -4,6 +4,7 @@ Valida o LocalStore (fallback JSON): conversas, memórias, chaves criptografadas
 tarefas, preferências de IA, atividade e busca. Nunca depende de rede/Supabase.
 """
 
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -136,12 +137,18 @@ class TestSettingsAndTasksAndActivity(unittest.TestCase):
 
 class TestFactory(unittest.TestCase):
     def test_factory_returns_local_without_env(self):
-        tmp = tempfile.TemporaryDirectory()
-        with unittest.mock.patch.dict("os.environ", {}, clear=False):
-            store = make_data_store(Path(tmp.name), b"segredo")
-        self.assertIsInstance(store, LocalStore)
-        self.assertTrue(store.enabled)
-        tmp.cleanup()
+        saved = {k: os.environ.pop(k, None) for k in ("SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY")}
+        try:
+            tmp = tempfile.TemporaryDirectory()
+            with unittest.mock.patch.dict("os.environ", {}, clear=False):
+                store = make_data_store(Path(tmp.name), b"segredo")
+            self.assertIsInstance(store, LocalStore)
+            self.assertTrue(store.enabled)
+            tmp.cleanup()
+        finally:
+            for k, v in saved.items():
+                if v is not None:
+                    os.environ[k] = v
 
 
 if __name__ == "__main__":

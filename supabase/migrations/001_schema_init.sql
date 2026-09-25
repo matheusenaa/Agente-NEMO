@@ -14,10 +14,12 @@ create extension if not exists "pgcrypto";
 create extension if not exists "uuid-ossp";
 
 -- ----------------------------------------------------------------------------
--- 1. Perfis (1:1 com auth.users)
+-- 1. Perfis (1:1 com o usuário do NEMO. O app autentica localmente (user_id
+--    em texto, ex.: u_f3a2_nome); o Supabase é o armazém de dados. RLS segue
+--    valendo como segunda camada via auth.uid()::text = user_id.)
 -- ----------------------------------------------------------------------------
 create table if not exists public.profiles (
-    id          uuid primary key references auth.users (id) on delete cascade,
+    id          text primary key,
     name        text not null default '',
     email       text,
     avatar_url  text,
@@ -47,7 +49,7 @@ create table if not exists public.agents (
 -- 3. Configurações de IA por agente por usuário
 -- ----------------------------------------------------------------------------
 create table if not exists public.agent_settings (
-    user_id   uuid not null references auth.users (id) on delete cascade,
+    user_id   text not null,
     agent_id  text not null references public.agents (id) on delete cascade,
     provider  text,
     model     text,
@@ -63,7 +65,7 @@ create table if not exists public.agent_settings (
 -- ----------------------------------------------------------------------------
 create table if not exists public.agent_memories (
     id         uuid primary key default gen_random_uuid(),
-    user_id    uuid not null references auth.users (id) on delete cascade,
+    user_id    text not null,
     agent_id   text not null,
     kind       text not null default 'obs',   -- obs | preferencia | instrucao | aprendizado
     content    text not null,
@@ -75,7 +77,7 @@ create table if not exists public.agent_memories (
 -- ----------------------------------------------------------------------------
 create table if not exists public.conversations (
     id         uuid primary key default gen_random_uuid(),
-    user_id    uuid not null references auth.users (id) on delete cascade,
+    user_id    text not null,
     agent_id   text not null,
     title      text not null default 'Nova conversa',
     created_at timestamptz not null default now(),
@@ -85,7 +87,7 @@ create table if not exists public.conversations (
 create table if not exists public.messages (
     id              uuid primary key default gen_random_uuid(),
     conversation_id uuid not null references public.conversations (id) on delete cascade,
-    user_id         uuid not null references auth.users (id) on delete cascade,
+    user_id         text not null,
     role            text not null check (role in ('user', 'assistant', 'system')),
     content         text not null,
     meta            jsonb not null default '{}'::jsonb,
@@ -98,7 +100,7 @@ create index if not exists idx_messages_conversation on public.messages (convers
 -- ----------------------------------------------------------------------------
 create table if not exists public.tasks (
     id         text primary key,
-    user_id    uuid not null references auth.users (id) on delete cascade,
+    user_id    text not null,
     title      text not null,
     priority   text not null default 'normal',
     agent_id   text not null default 'nemo',
@@ -114,7 +116,7 @@ create index if not exists idx_tasks_user on public.tasks (user_id, created_at d
 -- ----------------------------------------------------------------------------
 create table if not exists public.calendar_events (
     id         uuid primary key default gen_random_uuid(),
-    user_id    uuid not null references auth.users (id) on delete cascade,
+    user_id    text not null,
     title      text not null,
     description text,
     event_date date not null,
@@ -142,7 +144,7 @@ create table if not exists public.ai_providers (
 -- A API Key é recebida do frontend e encriptada no BACKEND (Fernet/AES) antes
 -- de chegar aqui. Nunca armazenamos texto puro (missão §17).
 create table if not exists public.user_ai_keys (
-    user_id       uuid not null references auth.users (id) on delete cascade,
+    user_id       text not null,
     provider      text not null,
     encrypted_key text not null,
     masked        text not null,       -- ex.: ************ABCD
@@ -156,9 +158,10 @@ create table if not exists public.user_ai_keys (
 -- 9. Preferências de IA por usuário
 -- ----------------------------------------------------------------------------
 create table if not exists public.ai_settings (
-    user_id         uuid primary key references auth.users (id) on delete cascade,
+    user_id         text primary key,
     default_provider text,
     default_model    text,
+    agent_overrides  jsonb not null default '{}'::jsonb,
     updated_at       timestamptz not null default now()
 );
 
@@ -167,7 +170,7 @@ create table if not exists public.ai_settings (
 -- ----------------------------------------------------------------------------
 create table if not exists public.web_searches (
     id         uuid primary key default gen_random_uuid(),
-    user_id    uuid not null references auth.users (id) on delete cascade,
+    user_id    text not null,
     agent_id   text not null,
     query      text not null,
     provider   text not null,
@@ -177,7 +180,7 @@ create table if not exists public.web_searches (
 
 create table if not exists public.activity_logs (
     id         bigint generated always as identity primary key,
-    user_id    uuid not null references auth.users (id) on delete cascade,
+    user_id    text not null,
     agent_id   text,
     operation  text not null,
     status     text not null,
@@ -210,76 +213,77 @@ alter table public.ai_settings     enable row level security;
 alter table public.web_searches    enable row level security;
 alter table public.activity_logs   enable row level security;
 
--- helper: o usuário autenticado só enxerga as PRÓPRIAS linhas.
-create or replace function public.is_owner(uid uuid) returns boolean
+-- helper: o usuário autenticado no Supabase só enxerga as PRÓPRIAS linhas.
+-- user_id é TEXT no NEMO (auth local); compara o uid (uuid) como texto.
+create or replace function public.is_owner(uid text) returns boolean
 language sql security definer stable as $$
-    select auth.uid() = uid;
+    select auth.uid()::text = uid;
 $$;
 
 -- --- profiles (dono = a própria linha) ---
-create policy "profiles select own"    on public.profiles for select using (auth.uid() = id);
-create policy "profiles update own"    on public.profiles for update using (auth.uid() = id) with check (auth.uid() = id);
-create policy "profiles insert own"    on public.profiles for insert with check (auth.uid() = id);
+create policy "profiles select own"    on public.profiles for select using (auth.uid()::text = id);
+create policy "profiles update own"    on public.profiles for update using (auth.uid()::text = id) with check (auth.uid()::text = id);
+create policy "profiles insert own"    on public.profiles for insert with check (auth.uid()::text = id);
 
 -- --- agentes: qualquer usuário autenticado lê (catálogo); só alterações por trigger/admin ---
 create policy "agents select authed" on public.agents for select using (auth.role() = 'authenticated');
 
 -- --- agent_settings: dono ---
-create policy "agent_settings select own" on public.agent_settings for select using (auth.uid() = user_id);
-create policy "agent_settings insert own" on public.agent_settings for insert with check (auth.uid() = user_id);
-create policy "agent_settings update own" on public.agent_settings for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
-create policy "agent_settings delete own" on public.agent_settings for delete using (auth.uid() = user_id);
+create policy "agent_settings select own" on public.agent_settings for select using (auth.uid()::text = user_id);
+create policy "agent_settings insert own" on public.agent_settings for insert with check (auth.uid()::text = user_id);
+create policy "agent_settings update own" on public.agent_settings for update using (auth.uid()::text = user_id) with check (auth.uid()::text = user_id);
+create policy "agent_settings delete own" on public.agent_settings for delete using (auth.uid()::text = user_id);
 
 -- --- agent_memories: dono ---
-create policy "memories select own" on public.agent_memories for select using (auth.uid() = user_id);
-create policy "memories insert own" on public.agent_memories for insert with check (auth.uid() = user_id);
-create policy "memories update own" on public.agent_memories for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
-create policy "memories delete own" on public.agent_memories for delete using (auth.uid() = user_id);
+create policy "memories select own" on public.agent_memories for select using (auth.uid()::text = user_id);
+create policy "memories insert own" on public.agent_memories for insert with check (auth.uid()::text = user_id);
+create policy "memories update own" on public.agent_memories for update using (auth.uid()::text = user_id) with check (auth.uid()::text = user_id);
+create policy "memories delete own" on public.agent_memories for delete using (auth.uid()::text = user_id);
 
 -- --- conversations / messages: dono ---
-create policy "conversations select own" on public.conversations for select using (auth.uid() = user_id);
-create policy "conversations insert own" on public.conversations for insert with check (auth.uid() = user_id);
-create policy "conversations update own" on public.conversations for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
-create policy "conversations delete own" on public.conversations for delete using (auth.uid() = user_id);
+create policy "conversations select own" on public.conversations for select using (auth.uid()::text = user_id);
+create policy "conversations insert own" on public.conversations for insert with check (auth.uid()::text = user_id);
+create policy "conversations update own" on public.conversations for update using (auth.uid()::text = user_id) with check (auth.uid()::text = user_id);
+create policy "conversations delete own" on public.conversations for delete using (auth.uid()::text = user_id);
 
-create policy "messages select own" on public.messages for select using (auth.uid() = user_id);
-create policy "messages insert own" on public.messages for insert with check (auth.uid() = user_id);
-create policy "messages delete own" on public.messages for delete using (auth.uid() = user_id);
+create policy "messages select own" on public.messages for select using (auth.uid()::text = user_id);
+create policy "messages insert own" on public.messages for insert with check (auth.uid()::text = user_id);
+create policy "messages delete own" on public.messages for delete using (auth.uid()::text = user_id);
 
 -- --- tasks: dono ---
-create policy "tasks select own" on public.tasks for select using (auth.uid() = user_id);
-create policy "tasks insert own" on public.tasks for insert with check (auth.uid() = user_id);
-create policy "tasks update own" on public.tasks for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
-create policy "tasks delete own" on public.tasks for delete using (auth.uid() = user_id);
+create policy "tasks select own" on public.tasks for select using (auth.uid()::text = user_id);
+create policy "tasks insert own" on public.tasks for insert with check (auth.uid()::text = user_id);
+create policy "tasks update own" on public.tasks for update using (auth.uid()::text = user_id) with check (auth.uid()::text = user_id);
+create policy "tasks delete own" on public.tasks for delete using (auth.uid()::text = user_id);
 
 -- --- calendar_events: dono ---
-create policy "calendar select own" on public.calendar_events for select using (auth.uid() = user_id);
-create policy "calendar insert own" on public.calendar_events for insert with check (auth.uid() = user_id);
-create policy "calendar update own" on public.calendar_events for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
-create policy "calendar delete own" on public.calendar_events for delete using (auth.uid() = user_id);
+create policy "calendar select own" on public.calendar_events for select using (auth.uid()::text = user_id);
+create policy "calendar insert own" on public.calendar_events for insert with check (auth.uid()::text = user_id);
+create policy "calendar update own" on public.calendar_events for update using (auth.uid()::text = user_id) with check (auth.uid()::text = user_id);
+create policy "calendar delete own" on public.calendar_events for delete using (auth.uid()::text = user_id);
 
 -- --- ai_providers: catálogo (leitura para autenticados) ---
 create policy "ai_providers select authed" on public.ai_providers for select using (auth.role() = 'authenticated');
 
 -- --- user_ai_keys: dono (e somente máscaras vão ao frontend) ---
-create policy "keys select own" on public.user_ai_keys for select using (auth.uid() = user_id);
-create policy "keys insert own" on public.user_ai_keys for insert with check (auth.uid() = user_id);
-create policy "keys update own" on public.user_ai_keys for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
-create policy "keys delete own" on public.user_ai_keys for delete using (auth.uid() = user_id);
+create policy "keys select own" on public.user_ai_keys for select using (auth.uid()::text = user_id);
+create policy "keys insert own" on public.user_ai_keys for insert with check (auth.uid()::text = user_id);
+create policy "keys update own" on public.user_ai_keys for update using (auth.uid()::text = user_id) with check (auth.uid()::text = user_id);
+create policy "keys delete own" on public.user_ai_keys for delete using (auth.uid()::text = user_id);
 
 -- --- ai_settings: dono ---
-create policy "ai_settings select own" on public.ai_settings for select using (auth.uid() = user_id);
-create policy "ai_settings insert own" on public.ai_settings for insert with check (auth.uid() = user_id);
-create policy "ai_settings update own" on public.ai_settings for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
-create policy "ai_settings delete own" on public.ai_settings for delete using (auth.uid() = user_id);
+create policy "ai_settings select own" on public.ai_settings for select using (auth.uid()::text = user_id);
+create policy "ai_settings insert own" on public.ai_settings for insert with check (auth.uid()::text = user_id);
+create policy "ai_settings update own" on public.ai_settings for update using (auth.uid()::text = user_id) with check (auth.uid()::text = user_id);
+create policy "ai_settings delete own" on public.ai_settings for delete using (auth.uid()::text = user_id);
 
 -- --- web_searches / activity_logs: dono ---
-create policy "searches select own" on public.web_searches for select using (auth.uid() = user_id);
-create policy "searches insert own" on public.web_searches for insert with check (auth.uid() = user_id);
-create policy "searches delete own" on public.web_searches for delete using (auth.uid() = user_id);
+create policy "searches select own" on public.web_searches for select using (auth.uid()::text = user_id);
+create policy "searches insert own" on public.web_searches for insert with check (auth.uid()::text = user_id);
+create policy "searches delete own" on public.web_searches for delete using (auth.uid()::text = user_id);
 
-create policy "activity select own" on public.activity_logs for select using (auth.uid() = user_id);
-create policy "activity insert own" on public.activity_logs for insert with check (auth.uid() = user_id);
+create policy "activity select own" on public.activity_logs for select using (auth.uid()::text = user_id);
+create policy "activity insert own" on public.activity_logs for insert with check (auth.uid()::text = user_id);
 
 -- ----------------------------------------------------------------------------
 -- NOTA: ao criar um usuário no Supabase Auth, disparar o perfil automaticamente.
@@ -291,7 +295,7 @@ create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
     insert into public.profiles (id, name, email)
-    values (new.id, coalesce(new.raw_user_meta_data->>'name', ''), new.email)
+    values (new.id::text, coalesce(new.raw_user_meta_data->>'name', ''), new.email)
     on conflict (id) do nothing;
     return new;
 end;

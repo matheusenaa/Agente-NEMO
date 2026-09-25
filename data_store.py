@@ -340,8 +340,36 @@ class SupabaseStore(DataStore):
     def _strip_ids(row: Dict[str, Any]) -> Dict[str, Any]:
         out = dict(row)
         if "messages" in out:
-            out["message_count"] = (out.pop("messages") or {}).get("count", 0)
+            msgs = out.pop("messages") or []
+            count = 0
+            if isinstance(msgs, list) and msgs:
+                count = (msgs[0] or {}).get("count", 0)
+            elif isinstance(msgs, dict):
+                count = msgs.get("count", 0)
+            out["message_count"] = count
         return out
+
+    @staticmethod
+    def _iso(ms_value: Any) -> Any:
+        """Converte ms (epoch) do frontend/local em ISO para coluna timestamptz."""
+        if isinstance(ms_value, (int, float)) and ms_value and ms_value > 10 ** 12:
+            from datetime import datetime, timezone
+            return datetime.fromtimestamp(ms_value / 1000, tz=timezone.utc).isoformat()
+        return ms_value
+
+    @staticmethod
+    def _ms(value: Any) -> Any:
+        """Converte timestamptz do Supabase de volta em ms (epoch), padrão local."""
+        if isinstance(value, str):
+            from datetime import datetime
+            try:
+                dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                return int(dt.timestamp() * 1000)
+            except Exception:
+                return value
+        if isinstance(value, (int, float)):
+            return int(value * 1000 if abs(value) < 10 ** 12 else value)
+        return value
 
     def create_conversation(self, user_id: str, agent_id: str, title: str) -> Dict[str, Any]:
         data = {
@@ -414,7 +442,12 @@ class SupabaseStore(DataStore):
     # ---- preferências ----
     def get_ai_settings(self, user_id: str) -> Dict[str, Any]:
         data = self._t("ai_settings").select("*").eq("user_id", user_id).execute().data
-        return data[0] if data else {}
+        row = data[0] if data else {}
+        out = dict(row)
+        ov = out.get("agent_overrides")
+        if not isinstance(ov, dict):
+            out["agent_overrides"] = {}
+        return out
 
     def save_ai_settings(self, user_id: str, data: Dict[str, Any]) -> None:
         payload = {"user_id": user_id, **{k: v for k, v in data.items() if k != "user_id"}}
@@ -423,10 +456,17 @@ class SupabaseStore(DataStore):
 
     # ---- tarefas ----
     def list_tasks(self, user_id: str) -> List[Dict[str, Any]]:
-        return self._t("tasks").select("*").eq("user_id", user_id).order("created_at", desc=True).execute().data
+        rows = self._t("tasks").select("*").eq("user_id", user_id).order("created_at", desc=True).execute().data
+        for r in rows:
+            for col in ("created_at", "due_date", "done_at"):
+                r[col] = self._ms(r.get(col))
+        return list(rows)
 
     def save_task(self, user_id: str, task: Dict[str, Any]) -> None:
         payload = {"user_id": user_id, **{k: v for k, v in task.items() if k not in ("user_id", "id")}}
+        for col in ("created_at", "due_date", "done_at"):
+            if col in payload:
+                payload[col] = self._iso(payload.get(col))
         data = self._t("tasks").select("id").eq("id", task.get("id", "")).eq("user_id", user_id).execute().data
         if data:
             self._t("tasks").update(payload).eq("id", task["id"]).eq("user_id", user_id).execute()

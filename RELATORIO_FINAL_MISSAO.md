@@ -596,4 +596,17 @@ O **NEMO IDE / Open Squad Dashboard** está **completo, testado e empacotado** c
 
 Na `Central de IA` → "Minhas API Keys", salve por usuário: **Gemini** (aistudio.google.com/apikey), **Groq** (console.groq.com/keys) e, para Supabase, rode `supabase/migrations/001_schema_init.sql` no SQL Editor e preencha `SUPABASE_URL`/`SUPABASE_ANON_KEY`/`SUPABASE_SERVICE_ROLE_KEY` no `.env`. Depois de ativar, rodar o teste ao vivo (chat real Gemini/Groq).
 
+### 16.4 Validação ao vivo (credendiais do usuário — finalizado)
+
+**Data:** 2026-09-24 · usuário forneceu Gemni (token `AQ…`), Groq (`gsk_…`) e Supabase project `yecdnbsljsroxcikcbpw` (`sb_secret…`).
+
+| Item | Resultado |
+|------|-----------|
+| ✨ **Gemini** | chave válida; **contas novas** não têm `gemini-2.x` → catálogo prioriza `gemini-flash-latest` (testado OK: 315 tokens) |
+| ⚡ **Groq** | chave válida; `llama-3.x` viraram Enterprise → catálogo usa `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `qwen/qwen3.8-27b` (validados; 284/321 tokens) |
+| 🗄️ **Supabase** | `001_schema_init.sql` executado no SQL Editor (Management API é read-only p/ DDL); `user_id` ajustado para **text** (auth local do NEMO) com RLS `auth.uid()::text = user_id`; `ai_settings.agent_overrides jsonb`; datas de tasks convertidas ms↔timestamptz; agregado `messages(count)` corrigido |
+| 🧪 **Testes** | **54 OK** (1 skip) — `test_multiuser.py` rodou contra o **Postgres real** (isolamento A/B), `test_data_store` resiliente a `.env` com Supabase |
+| 🔄 **Chat ao vivo p/ supabase** | pergunta real → resposta correta, conversa+atividade+tokens persistidos no banco |
+| 🔒 **Auditoria** | `git grep` rastreado sem segredos reais (`gsk_/AIza/AQ/sb_secret` só em `.env` ignorado e em mocks de teste; token `sbp_` usado só em execução transitória, não versionado) |
+
 ---
