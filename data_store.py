@@ -59,6 +59,11 @@ class DataStore:
     def create_conversation(self, user_id: str, agent_id: str, title: str) -> Dict[str, Any]: ...
     def append_message(self, user_id: str, conversation_id: str, role: str, content: str, meta: Optional[Dict[str, Any]] = None) -> None: ...
     def list_messages(self, user_id: str, conversation_id: str) -> List[Dict[str, Any]]: ...
+    def delete_conversation(self, user_id: str, conversation_id: str) -> bool: ...
+
+    # ---- perfil do usuário ----
+    def get_profile(self, user_id: str) -> Dict[str, Any]: ...
+    def save_profile(self, user_id: str, data: Dict[str, Any]) -> None: ...
 
     # ---- memórias dos agentes ----
     def list_memories(self, user_id: str, agent_id: Optional[str] = None) -> List[Dict[str, Any]]: ...
@@ -175,6 +180,25 @@ class LocalStore(DataStore):
     def list_messages(self, user_id: str, conversation_id: str) -> List[Dict[str, Any]]:
         conv = self._find_conversation(user_id, conversation_id)
         return (conv or {}).get("messages", [])
+
+    def delete_conversation(self, user_id: str, conversation_id: str) -> bool:
+        convs = _read_json(self._f(user_id, "conversations.json"), [])
+        remaining = [c for c in convs if c.get("id") != conversation_id]
+        if len(remaining) == len(convs):
+            return False
+        _write_json(self._f(user_id, "conversations.json"), remaining)
+        return True
+
+    # ---- perfil do usuário ----
+    def get_profile(self, user_id: str) -> Dict[str, Any]:
+        return _read_json(self._f(user_id, "profile.json"), {})
+
+    def save_profile(self, user_id: str, data: Dict[str, Any]) -> None:
+        allowed = {k: data[k] for k in ("name", "email", "language", "avatar", "default_agent", "preferences") if k in data and data[k] is not None}
+        profile = _read_json(self._f(user_id, "profile.json"), {})
+        profile.update(allowed)
+        profile["user_id"] = user_id
+        _write_json(self._f(user_id, "profile.json"), profile)
 
     # ---- memórias ----
     def list_memories(self, user_id: str, agent_id: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -392,6 +416,34 @@ class SupabaseStore(DataStore):
     def list_messages(self, user_id: str, conversation_id: str) -> List[Dict[str, Any]]:
         return self._t("messages").select("*").eq("conversation_id", conversation_id).eq("user_id", user_id)\
             .order("created_at").execute().data
+
+    def delete_conversation(self, user_id: str, conversation_id: str) -> bool:
+        owned = self._t("conversations").select("id").eq("id", conversation_id).eq("user_id", user_id).execute().data
+        if not owned:
+            return False
+        self._t("messages").delete().eq("conversation_id", conversation_id).execute()
+        self._t("conversations").delete().eq("id", conversation_id).eq("user_id", user_id).execute()
+        return True
+
+    # ---- perfil do usuário (profiles) ----
+    _PROFILE_MAP = {"avatar": "avatar_url", "default_agent": None, "preferences": None}
+
+    def get_profile(self, user_id: str) -> Dict[str, Any]:
+        data = self._t("profiles").select("*").eq("id", user_id).execute().data
+        row = dict(data[0]) if data else {}
+        out = {k: v for k, v in row.items() if k in ("id", "name", "email", "language", "role")}
+        if "avatar_url" in row:
+            out["avatar"] = row["avatar_url"]
+        return out
+
+    def save_profile(self, user_id: str, data: Dict[str, Any]) -> None:
+        payload: Dict[str, Any] = {"id": user_id, "updated_at": _now_iso()}
+        for k in ("name", "email", "language"):
+            if data.get(k) is not None:
+                payload[k] = data[k]
+        if data.get("avatar") is not None:
+            payload["avatar_url"] = data["avatar"]
+        self._t("profiles").upsert(payload, on_conflict="id").execute()
 
     # ---- memórias ----
     def list_memories(self, user_id: str, agent_id: Optional[str] = None) -> List[Dict[str, Any]]:

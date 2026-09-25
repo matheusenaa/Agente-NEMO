@@ -1,5 +1,5 @@
 import type {
-  AiConfigResponse, AiConversation, AiMemory, AiTask, CalendarEvent, FileNode, OpenFile, SearchWebResult,
+  AiConfigResponse, AiConversation, AiMemory, AiProfile, AiTask, CalendarEvent, FileNode, OpenFile, SearchWebResult,
 } from "@/types/idea";
 
 const BASE = "/api/nemo";
@@ -149,8 +149,25 @@ export const nemoApi = {
   },
 
   // ---- Conversas persistidas ----
-  async listConversations(agent?: string): Promise<{ ok: boolean; conversations: AiConversation[] }> {
-    return request(`/conversations${agent ? `?agent=${encodeURIComponent(agent)}` : ""}`);
+  async listConversations(agent?: string, q?: string): Promise<{ ok: boolean; conversations: AiConversation[] }> {
+    const p = new URLSearchParams();
+    if (agent) p.set("agent", agent);
+    if (q) p.set("q", q);
+    return request(`/conversations${p.toString() ? `?${p}` : ""}`);
+  },
+  async deleteConversation(id: string): Promise<{ ok: boolean; deleted: string }> {
+    return request(`/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+  async conversationMessages(id: string): Promise<{ ok: boolean; messages: { role: string; content: string; created_at: number | string }[] }> {
+    return request(`/conversations/${encodeURIComponent(id)}/messages`);
+  },
+
+  // ---- Perfil do usuário (missão §8) ----
+  async getProfile(): Promise<{ ok: boolean; profile: AiProfile }> {
+    return request("/profile");
+  },
+  async saveProfile(data: Partial<Pick<AiProfile, "name" | "language" | "avatar" | "default_agent" | "preferences">>): Promise<{ ok: boolean; profile: AiProfile }> {
+    return request("/profile", { method: "POST", body: JSON.stringify(data) });
   },
 
   // ---- Tarefas persistidas (sync leve) ----

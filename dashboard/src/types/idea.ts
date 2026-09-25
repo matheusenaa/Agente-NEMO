@@ -197,6 +197,16 @@ export interface AiConversation {
   message_count?: number;
 }
 
+export interface AiProfile {
+  id: string;
+  email?: string;
+  name?: string;
+  language?: string;
+  avatar?: string;
+  default_agent?: string;
+  preferences?: Record<string, unknown>;
+}
+
 export interface SearchWebResult {
   title: string;
   url: string;

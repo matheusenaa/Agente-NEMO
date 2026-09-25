@@ -609,4 +609,16 @@ Na `Central de IA` → "Minhas API Keys", salve por usuário: **Gemini** (aistud
 | 🔄 **Chat ao vivo p/ supabase** | pergunta real → resposta correta, conversa+atividade+tokens persistidos no banco |
 | 🔒 **Auditoria** | `git grep` rastreado sem segredos reais (`gsk_/AIza/AQ/sb_secret` só em `.env` ignorado e em mocks de teste; token `sbp_` usado só em execução transitória, não versionado) |
 
+### 16.5 Pendências restantes da missão — executadas
+
+**Data:** 2026-09-24 · commits `cffa657` (anteriores) e este (pendências §26/§8/§38).
+
+| Item | O que foi feito | Validação |
+|------|------------------|-----------|
+| 🗂️ **§26 Histórico de conversas** | `DELETE /api/nemo/conversations/{id}` (exclui conversa + mensagens via cascade, 404 se não pertence ao usuário); `GET /api/nemo/conversations?q=` busca no **título e no conteúdo**; `GET /{id}/messages` para reabrir; painel `📚` no chat com buscar/reabrir/apagar/"Nova conversa" | teste novo `test_mission_features` (busca `?q=cloud`, delete 200→404, isolamento A/B) + build do dashboard |
+| 👤 **§8 Perfil do usuário** | `GET/POST /api/nemo/profile` (nome, idioma, avatar) → tabela `profiles` (mapeia `avatar`→`avatar_url`) no Supabase / `profile.json` local; cartão "👤 Perfil" em Configurações com preview, idioma e avatares | roundtrip POST/GET ao vivo + teste; build frontend |
+| 💡 **§38 Health** | `GET /api/nemo/health → ai.default_model` via novo `AIService.default_provider_model()`; dashboard mostra "IA ativa", provedor padrão e **modelo padrão** (`openai/gpt-oss-120b`/Groq) | teste de health + ao vivo |
+| 🧪 **Testes** | `test_mission_features.py` (4 testes: perfil, busca+exclusão, isolamento, health) rodando contra o **Supabase real** | suíte completa **58 OK (1 skip)** |
+| 📚 **Docs** | README atualizado (endpoints, perfil, busca/exclusão de conversas, default_model) + esta seção | — |
+
 ---

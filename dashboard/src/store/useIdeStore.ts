@@ -80,8 +80,9 @@ interface IdeStore {
   // chat por agente (threads independentes)
   threads: Record<string, ChatMessage[]>;
   addUserMessage: (agentId: string, content: string) => string;
-  insertAgentMessage: (agentId: string, m: Omit<ChatMessage, "id" | "time" | "status">) => string;
-  patchMessage: (agentId: string, id: string, patch: Partial<ChatMessage>) => void;
+insertAgentMessage: (agentId: string, m: Omit<ChatMessage, "id" | "time" | "status">) => string;
+    replaceThread: (agentId: string, msgs: ChatMessage[]) => void;
+    patchMessage: (agentId: string, id: string, patch: Partial<ChatMessage>) => void;
 
   // calendário / eventos
   events: CalendarEvent[];
@@ -190,6 +191,9 @@ export const useIdeStore = create<IdeStore>()(
           },
         }));
         return id;
+      },
+      replaceThread: (agentId, msgs) => {
+        set((s) => ({ threads: { ...s.threads, [agentId]: msgs } }));
       },
       patchMessage: (agentId, id, patch) =>
         set((s) => ({

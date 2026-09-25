@@ -1,7 +1,10 @@
+import { useEffect, useState } from "react";
 import { useIdeStore } from "@/store/useIdeStore";
 import { THEMES } from "@/data/themes";
 import { LAYOUTS } from "@/data/agents";
 import { AiSettingsCard } from "./AiSettingsCard";
+import { nemoApi } from "@/api/nemo";
+import type { AiProfile } from "@/types/idea";
 import type { Density, IdeConfig, LayoutId } from "@/types/idea";
 
 function resetAll() {
@@ -9,6 +12,96 @@ function resetAll() {
   localStorage.removeItem("nemo-ide");
   localStorage.removeItem("nemo-user-name");
   window.location.reload();
+}
+
+const AVATARS = ["🐬", "🧠", "🎨", "🔍", "✍️", "📊", "🚀", "🛠️"];
+
+function ProfileCard() {
+  const notify = useIdeStore((s) => s.notify);
+  const [profile, setProfile] = useState<AiProfile | null>(null);
+  const [name, setName] = useState("");
+  const [language, setLanguage] = useState("pt-BR");
+  const [avatar, setAvatar] = useState("🐬");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    nemoApi
+      .getProfile()
+      .then((r) => {
+        setProfile(r.profile);
+        setName(r.profile.name ?? "");
+        setLanguage(r.profile.language ?? "pt-BR");
+        setAvatar(r.profile.avatar ?? "🐬");
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    setSaved(false);
+    try {
+      await nemoApi.saveProfile({ name, language, avatar });
+      setProfile((p) => (p ? { ...p, name, language, avatar } : p));
+      setSaved(true);
+      notify({ icon: "👤", text: "Perfil salvo.", tone: "ok" });
+      setTimeout(() => setSaved(false), 2500);
+    } catch {
+      notify({ icon: "⚠️", text: "Não foi possível salvar o perfil.", tone: "error" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="set-card">
+      <h3>👤 Perfil</h3>
+      {profile && (
+        <div className="set-row" style={{ alignItems: "center" }}>
+          <span
+            style={{
+              width: 40, height: 40, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 22, background: "var(--bg2)", border: "1px solid var(--border)",
+            }}
+          >
+            {avatar}
+          </span>
+          <span style={{ color: "var(--text3)", fontSize: 12 }}>
+            {profile.email || "sem e-mail"} {saved && <b style={{ color: "var(--success)" }}>· salvo ✓</b>}
+          </span>
+        </div>
+      )}
+      <div className="set-row">
+        <span>Nome</span>
+        <input className="hist-search" style={{ margin: 0, width: "min(280px,100%)" }} value={name} onChange={(e) => setName(e.target.value)} placeholder="Seu nome" />
+      </div>
+      <div className="set-row">
+        <span>Idioma</span>
+        <div className="seg">
+          {["pt-BR", "en", "es"].map((l) => (
+            <button key={l} className={`seg-btn ${language === l ? "on" : ""}`} onClick={() => setLanguage(l)}>
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="set-row">
+        <span>Avatar</span>
+        <div className="seg" style={{ flexWrap: "wrap" }}>
+          {AVATARS.map((a) => (
+            <button key={a} className={`seg-btn ${avatar === a ? "on" : ""}`} onClick={() => setAvatar(a)} style={{ fontSize: 16, padding: "4px 8px" }}>
+              {a}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="set-row">
+        <button className="tool-btn primary" style={{ minWidth: 120 }} onClick={save} disabled={saving}>
+          {saving ? "Salvando..." : "Salvar perfil"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export function SettingsView() {
@@ -27,6 +120,8 @@ export function SettingsView() {
     <section className="view-area">
       <div className="settings-wrap">
         <h2 style={{ margin: "0 0 12px", fontSize: 20 }}>⚙️ Configurações</h2>
+
+        <ProfileCard />
 
         <div className="set-card">
           <h3>🎨 Tema</h3>

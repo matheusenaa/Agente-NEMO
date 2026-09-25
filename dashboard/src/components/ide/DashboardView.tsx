@@ -12,6 +12,7 @@ import { pickPhrase } from "@/data/statusPhrases";
 interface AiHealth {
   providers_configured: { id: string; name: string; icon: string }[];
   default_provider: string;
+  default_model?: string;
   web_search: string[];
   store_backend: string;
 }
@@ -284,6 +285,9 @@ export function DashboardView() {
                 ))}
                 <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 8 }}>
                   Banco: <b>{ai.store_backend === "supabase" ? "🟢 Supabase" : "local (_data)"}</b> · Busca web: {ai.web_search.join(", ") || "—"}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 4 }}>
+                  Modelo padrão: <b>{ai.default_model || "—"}</b>
                 </div>
               </>
             ) : (

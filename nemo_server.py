@@ -681,6 +681,15 @@ class ConversationRequest(BaseModel):
     title: str = ""
 
 
+class ProfileRequest(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    language: Optional[str] = None
+    avatar: Optional[str] = None
+    default_agent: Optional[str] = None
+    preferences: Optional[Dict[str, Any]] = None
+
+
 class MessageRequest(BaseModel):
     role: str = "user"
     content: str = ""
@@ -706,6 +715,7 @@ def health(request: Request) -> Dict[str, Any]:
     ai = {
         "providers_configured": [p for p in AI_SERVICE.provider_catalog() if p["configured"]],
         "default_provider": AI_SERVICE.default_provider(),
+        "default_model": AI_SERVICE.default_provider_model(),
         "web_search": WEB_SEARCH_SERVICE.available_providers(),
         "store_backend": DATA_STORE.name,
         "encryption": KEY_STORE.available,
@@ -1421,10 +1431,27 @@ def ai_activity(request: Request, limit: int = 50) -> Dict[str, Any]:
 
 
 @app.get("/api/nemo/conversations")
-def conversations_list(request: Request, agent: str = "") -> Dict[str, Any]:
+def conversations_list(request: Request, agent: str = "", q: str = "") -> Dict[str, Any]:
     user = _require_user(request)
     try:
-        return {"ok": True, "conversations": DATA_STORE.list_conversations(user["id"], agent or None)}
+        convs = DATA_STORE.list_conversations(user["id"], agent or None)
+        needle = q.strip().lower()
+        if needle:
+            found = []
+            for c in convs:
+                hay = (c.get("title") or "").lower()
+                if needle in hay:
+                    found.append(c)
+                    continue
+                try:
+                    for m in DATA_STORE.list_messages(user["id"], c["id"]):
+                        if needle in (m.get("content") or "").lower():
+                            found.append(c)
+                            break
+                except Exception:
+                    continue
+            convs = found
+        return {"ok": True, "conversations": convs}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -1436,6 +1463,15 @@ def conversations_create(req: ConversationRequest, request: Request) -> Dict[str
     return {"ok": True, "conversation": conv}
 
 
+@app.delete("/api/nemo/conversations/{conversation_id}")
+def conversations_delete(conversation_id: str, request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
+    deleted = DATA_STORE.delete_conversation(user["id"], conversation_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Conversa não encontrada.")
+    return {"ok": True, "deleted": conversation_id}
+
+
 @app.get("/api/nemo/conversations/{conversation_id}/messages")
 def conversations_messages(conversation_id: str, request: Request) -> Dict[str, Any]:
     user = _require_user(request)
@@ -1443,6 +1479,24 @@ def conversations_messages(conversation_id: str, request: Request) -> Dict[str, 
         return {"ok": True, "messages": DATA_STORE.list_messages(user["id"], conversation_id)}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/nemo/profile")
+def profile_get(request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
+    profile = DATA_STORE.get_profile(user["id"]) or {}
+    base = {"id": user["id"], "email": user.get("email", ""), "name": user.get("name", "")}
+    base.update({k: v for k, v in profile.items() if k in ("name", "email", "language", "avatar", "default_agent", "preferences")})
+    return {"ok": True, "profile": base}
+
+
+@app.post("/api/nemo/profile")
+def profile_save(req: ProfileRequest, request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
+    data = {k: v for k, v in req.model_dump(exclude_none=True).items() if v is not None and v != ""}
+    data.setdefault("email", user.get("email", ""))
+    DATA_STORE.save_profile(user["id"], data)
+    return {"ok": True, "profile": {**data, "id": user["id"]}}
 
 
 # ---------------------------------------------------------------------------

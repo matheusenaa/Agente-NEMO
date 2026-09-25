@@ -407,6 +407,17 @@ class AIProviderService:
     def default_provider(self) -> str:
         return os.getenv("NEMO_AI_PROVIDER", "openrouter") or "openrouter"
 
+    def default_provider_model(self) -> str:
+        provider = self.default_provider()
+        key = self.system_keys.get(provider, "")
+        if provider == "gemini":
+            return GEMINI_MODELS[0] if GEMINI_MODELS else "gemini-flash-latest"
+        if provider == "groq":
+            return GROQ_MODELS[0] if GROQ_MODELS else "openai/gpt-oss-20b"
+        if provider == "openai":
+            return OPENAI_MODELS[0] if OPENAI_MODELS else "gpt-4o-mini"
+        return OPENROUTER_MODELS[0] if OPENROUTER_MODELS else (key or "openrouter/auto")
+
     # ------------------------------------------------------------------
     # Execução
     # ------------------------------------------------------------------

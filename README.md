@@ -89,7 +89,7 @@ Copy-Item .env.example .env
 python nemo_server.py
 ```
 
-O servidor sobe em `http://127.0.0.1:8798` e expõe: `/api/nemo/health`, `/api/nemo/chat`, `/api/nemo/files`, `/api/nemo/file`, `/api/nemo/file/save`, `/api/nemo/terminal`, `/api/nemo/models`, `/api/nemo/snapshot`, `/api/nemo/auth`, `/api/nemo/context`, `/api/nemo/agents`, `/api/nemo/ai/config|keys|test|search|memories`, `/api/nemo/conversations`, `/api/nemo/tasks` — e, em produção, também serve o dashboard compilado na raiz `/`.
+O servidor sobe em `http://127.0.0.1:8798` e expõe: `/api/nemo/health`, `/api/nemo/chat`, `/api/nemo/files`, `/api/nemo/file`, `/api/nemo/file/save`, `/api/nemo/terminal`, `/api/nemo/models`, `/api/nemo/snapshot`, `/api/nemo/auth`, `/api/nemo/context`, `/api/nemo/agents`, `/api/nemo/ai/config|keys|test|search|memories`, `/api/nemo/conversations` (+ `DELETE` por id e busca com `?q=`), `/api/nemo/conversations/{id}/messages`, `/api/nemo/profile` (GET/POST), `/api/nemo/tasks` — e, em produção, também serve o dashboard compilado na raiz `/`.
 
 > **Sem nenhuma chave de IA**: o chat responde com um aviso amigável e funcionam todas as telas da IDE (arquivos, terminal, tasks, escritório). **Com chave vencida/inválida (HTTP 401)**: o NEMO explica que precisa de uma chave nova.
 
@@ -236,7 +236,9 @@ O backend fala com **uma camada abstrata** (`ai_providers.py`) — o restante do
 - **API Keys dos usuários**: guardadas **criptografadas** (Fernet derivado de `AUTH_SECRET`, `ai_keys.py`); o frontend só vê a máscara `****...abcd`; nunca vão para logs/Git.
 - **Isolamento multiusuário**: todo dado (conversa, memória, chave, tarefa, atividade) é por `user_id`, com RLS `auth.uid() = user_id` no Supabase e pastas separadas no modo local (missão §56).
 - **Busca na web**: `web_search.py` usa DuckDuckGo (sem chave) por padrão, com Tavily (`TAVILY_API_KEY`) e Brave (`BRAVE_API_KEY`) quando configurados. A busca é condicional (só quando o agente tem a ferramenta e o pedido indica busca externa) e tem rate-limit por usuário (`WEB_SEARCH_RATE_LIMIT`, padrão 10/min).
-- **Memória + conversas + tarefas**: persistidas por usuário via `data_store.py`.
+- **Memória + conversas + tarefas**: persistidas por usuário via `data_store.py`. Conversas têm **busca no título e no conteúdo** (`GET /api/nemo/conversations?q=...`) e **exclusão** (`DELETE /api/nemo/conversations/{id}`, com as mensagens) — no chat, o botão `📚` reabre ("continuar conversa") ou apaga uma conversa (missão §26).
+- **Perfil do usuário**: `GET/POST /api/nemo/profile` persiste nome, idioma e avatar (tabela `profiles` no Supabase / `profile.json` local); cartão "👤 Perfil" em Configurações (missão §8).
+- **Health (missão §38)**: `GET /api/nemo/health → ai` expõe `default_provider` e `default_model` — o dashboard mostra "IA ativa", provedor padrão e modelo padrão.
 
 ### Configurando no `.env`
 
