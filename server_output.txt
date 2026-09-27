@@ -1,0 +1,2 @@
+🐟 NEMO IDE API rodando em http://127.0.0.1:8798
+INFO:     127.0.0.1:50392 - "GET /api/nemo/health HTTP/1.1" 200 OK
