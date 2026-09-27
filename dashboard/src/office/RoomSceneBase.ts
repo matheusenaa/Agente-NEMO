@@ -77,7 +77,10 @@ export abstract class BaseRoomScene extends Phaser.Scene {
 
   /** Posição do sofá / área de descanso da sala (override nas subclasses). */
   protected restAnchor(): { x: number; y: number } | null {
-    return null;
+    // Default: centro inferior da sala com margem segura
+    if (this.roomH <= 0) return null;
+    const marginFromBottom = 120;
+    return { x: this.roomW / 2, y: this.roomH - marginFromBottom };
   }
 
   isAgentResting(id: string): boolean {
@@ -88,10 +91,20 @@ export abstract class BaseRoomScene extends Phaser.Scene {
     const anchor = this.restAnchor();
     const sprite = this.agentSprites.get(id);
     if (!anchor || !sprite || this.restingIds.has(id)) return;
-    // Espalha os colegas pelo sofá para não empilharem
-    const spread = (this.restingIds.size - Math.floor(this.restingIds.size / 2)) * 44;
-    sprite.moveTo(anchor.x + spread, anchor.y, true);
+    
+    // Calcula spread seguro dentro dos limites da câmera
+    const maxSpread = Math.min(this.roomW * 0.35, 200); // máx 35% da largura ou 200px
+    const spreadIndex = this.restingIds.size;
+    const spread = Math.max(-maxSpread, Math.min(maxSpread, (spreadIndex - Math.floor(this.restingIds.size / 2)) * 44));
+    
+    const targetX = Phaser.Math.Clamp(anchor.x + spread, anchor.x - maxSpread, anchor.x + maxSpread);
+    const targetY = anchor.y;
+    
+    sprite.moveTo(targetX, targetY, true);
     this.restingIds.add(id);
+    
+    // Centraliza câmera na área do sofá suavemente
+    this.recenterCamera(anchor.x, anchor.y);
   }
 
   returnAgentToDesk(id: string): void {
@@ -100,6 +113,9 @@ export abstract class BaseRoomScene extends Phaser.Scene {
     const home = sprite.homePosition();
     sprite.moveTo(home.x, home.y, false);
     this.restingIds.delete(id);
+    
+    // Centraliza câmera no centro da sala suavemente
+    this.recenterCamera();
   }
 
   setAgentClickHandler(handler: (id: string) => void): void {
@@ -227,6 +243,14 @@ export abstract class BaseRoomScene extends Phaser.Scene {
     const zoom = Math.max(0.35, Math.min(this.fitW / (this.roomW + 32), this.fitH / (this.roomH + 32), 2));
     cam.setZoom(zoom);
     cam.centerOn(this.roomW / 2, this.roomH / 2);
+  }
+
+  /** Recentraliza a câmera suavemente (chamado quando agentes se movem para áreas críticas). */
+  protected recenterCamera(targetX?: number, targetY?: number, duration = 600): void {
+    const cam = this.cameras.main;
+    const tx = targetX ?? this.roomW / 2;
+    const ty = targetY ?? this.roomH / 2;
+    cam.pan(tx, ty, duration, 'Sine.easeInOut');
   }
 
   protected clearScene(): void {

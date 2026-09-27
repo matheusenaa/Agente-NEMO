@@ -59,7 +59,10 @@ export class OfficeScene extends BaseRoomScene {
 
   /** Sofá do lounge (fundo da sala), onde os agentes vão descansar. */
   protected restAnchor(): { x: number; y: number } | null {
-    const loungeY = this.roomH - MARGIN - TILE * 0.5;
-    return { x: this.roomW / 2, y: loungeY + TILE * 0.3 - 40 };
+    // Posição do sofá bem no centro da área visível da câmera
+    // Deixa margem suficiente para o spread não sair da tela
+    const marginFromBottom = TILE * 4; // ~128px da borda inferior
+    const loungeY = this.roomH - marginFromBottom;
+    return { x: this.roomW / 2, y: loungeY };
   }
 }
