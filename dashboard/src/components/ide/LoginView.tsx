@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useAuthStore } from "@/store/useAuthStore";
 import { AGENT_ROSTER } from "@/data/agents";
 import { AgentAvatar } from "@/components/AgentAvatar";
+import { BrandLogo } from "@/components/BrandLogo";
 import { BRAND } from "@/config/branding";
 
 type Mode = "login" | "register";
@@ -154,7 +155,9 @@ export function LoginView() {
 
       <div className="auth-card">
         <div className="auth-brand">
-          <div className="auth-logo">{BRAND.icons.logo}</div>
+          <div className="auth-logo">
+            <BrandLogo size="lg" priority />
+          </div>
           <div className="auth-brandname">{BRAND.name}</div>
           <div className="auth-brandsub">{BRAND.slogan}</div>
         </div>

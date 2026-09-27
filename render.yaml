@@ -11,17 +11,28 @@ services:
     runtime: python
     plan: free
     region: oregon
+    autoDeployTrigger: commit
     buildCommand: |
-      pip install -r requirements.txt
+      pip install --no-cache-dir -r requirements.txt
       cd dashboard
-      npm install
+      npm ci || npm install
       npm run build
+      test -f dist/index.html || (echo "FALHA: dashboard/dist/index.html nao foi gerado" && exit 1)
       cd ..
     startCommand: uvicorn nemo_server:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /api/nemo/health
+    healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.10
+      - key: AUTH_SECRET
+        sync: false
+        # OBRIGATORIO no Render: python -c "import secrets;
+        # print(secrets.token_urlsafe(48))"
+        # Sem isso o app gera um segredo aleatorio por instancia e todas as
+        # sessoes caem a cada novo deploy. NUNCA reutilize o valor local.
+      - key: NEMO_ADMIN_EMAIL
+        sync: false
+        # E-mail do usuario ADMIN inicial (unico autorizado a criar contas)
       - key: OPENROUTER_API_KEY
         sync: false
         # Preencha no painel do Render: Settings → Environment → Add ->

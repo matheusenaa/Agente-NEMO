@@ -78,9 +78,15 @@ export function AppShell() {
       };
     }
     setIdeReady(false);
-    void hydrateIdeForUser(authUser.id).then(() => {
-      if (alive) setIdeReady(true);
-    });
+    // Sem .catch() uma rejeicao (ex.: localStorage bloqueado/quota) deixava
+    // ideReady=false para sempre e a UI presa em "Verificando sua sessao...".
+    hydrateIdeForUser(authUser.id)
+      .catch((err) => {
+        console.error("[SYNOP] falha ao hidratar IDE:", err);
+      })
+      .finally(() => {
+        if (alive) setIdeReady(true);
+      });
     return () => {
       alive = false;
     };
@@ -109,7 +115,7 @@ export function AppShell() {
     const nemo = getAgent("nemo");
     useIdeStore.getState().notify({
       icon: nemo.icon,
-      text: `Bem-vindo(a), ${authUser.name.split(" ")[0]}! 🐟 {BRAND.name} está pronto para trabalhar.`,
+      text: `Bem-vindo(a), ${authUser.name.split(" ")[0]}! 🐟 ${BRAND.name} está pronto para trabalhar.`,
       tone: "ok",
     });
   }, [authUser]);

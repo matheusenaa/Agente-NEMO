@@ -39,6 +39,21 @@ export const BRAND = {
     favicon: "🧠",           // Favicon fallback
     loading: "⚡",           // Loading indicator
   },
+
+  /**
+   * Assets oficiais da marca. Servidos de /public/assets/branding e portanto
+   * disponíveis em dev, build e produção (Render) sem import — o path é
+   * resolvido pelo servidor em runtime. NUNCA apontar para um caminho local
+   * (ex.: C:\Users\...): isso quebraria no deploy.
+   */
+  assets: {
+    logoWebp: "/assets/branding/synop-logo.webp",   // login / splash (leve)
+    logoJpg: "/assets/branding/synop-logo.jpg",     // fallback sem suporte a webp
+    splashWebp: "/assets/branding/synop-splash.webp",
+    icon64: "/assets/branding/synop-icon-64.png",   // favicon
+    icon192: "/assets/branding/synop-icon-192.png", // PWA / apple-touch
+    icon512: "/assets/branding/synop-icon-512.png", // PWA maskable
+  },
   
   // Configurações PWA
   pwa: {
@@ -73,7 +88,7 @@ export const BRAND = {
     loginSubtitle: "Inteligência que organiza o seu amanhã",
     dashboardTitle: "SYNOP — Dashboard",
     headerBrand: "SYNOP",
-    headerSubtitle: "INTELLIGENT AI PLATFORM",
+    headerSubtitle: "PLATAFORMA DE AGENTES DE IA",
     loadingText: "Carregando SYNOP...",
     offlineText: "SYNOP — Modo offline",
     errorTitle: "SYNOP — Erro",

@@ -22,7 +22,17 @@ async function request<T>(path: string, init?: RequestInit, token?: string): Pro
     headers,
     credentials: "include",
   });
+  // O catch-all do backend (SPA fallback) responde 200 com HTML para rotas
+  // /api desconhecidas. Nesse caso res.json() falha e o corpo seria null —
+  // devolver null fazia o chamador estourar "Cannot read properties of null".
   const body = await res.json().catch(() => null);
+  const contentType = res.headers.get("Content-Type") || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error(`Resposta inválida do servidor (HTTP ${res.status}, ${contentType || "sem content-type"})`);
+  }
+  if (body === null) {
+    throw new Error(`Resposta JSON inválida do servidor (HTTP ${res.status})`);
+  }
   if (!res.ok) {
     throw new Error((body?.detail as string) || `HTTP ${res.status}`);
   }

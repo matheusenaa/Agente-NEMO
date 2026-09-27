@@ -823,6 +823,18 @@ class TaskRequest(BaseModel):
 # Endpoints
 # ---------------------------------------------------------------------------
 
+@app.get("/health", include_in_schema=False)
+@app.get("/healthz", include_in_schema=False)
+def liveness() -> Dict[str, Any]:
+    """Liveness/readiness mínimo para o health check do Render.
+
+    NÃO depende de OpenRouter, Supabase, WebSocket nem de assets: se qualquer
+    serviço externo estiver fora, o processo continua saudavel e o dashboard
+    ainda abre. Só falha se o próprio processo não estiver respondendo.
+    """
+    return {"status": "ok", "service": PROJECT_NAME, "version": VERSION, "time": datetime.now().isoformat()}
+
+
 @app.get("/api/nemo/health")
 def health(request: Request) -> Dict[str, Any]:
     c = get_client()

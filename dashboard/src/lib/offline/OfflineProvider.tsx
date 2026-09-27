@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, useCallback, ReactNode } from "react";
 import { createRepository, type DataRepository } from "./repository";
 import { syncEngine } from "./syncEngine";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
@@ -54,23 +54,36 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
     }
   }, [networkStatus.status, repository]);
 
-  const syncApi = useCallback(() => {
-    if (!repository) throw new Error("Repository not ready");
-    return {
-      getPendingSync: (limit?: number) => repository.getPendingSync(limit),
-      markSynced: (id: string) => repository.markSynced(id),
-      incrementRetry: (id: string) => repository.incrementRetry(id),
-      cleanupSynced: () => repository.cleanupSynced(),
-      startAutoSync: () => syncEngine.startAutoSync(),
-      stopAutoSync: () => syncEngine.stopAutoSync(),
-    };
-  }, [repository]);
-
-  return (
-    <OfflineContext.Provider value={{ repository, isReady, networkStatus, sync: syncApi(), initialize }}>
-      {children}
-    </OfflineContext.Provider>
+  // Nunca lanca durante o render: no primeiro render `repository` ainda e null
+  // (so e atribuido no efeito initialize). Lancar aqui desmontava a raiz inteira
+  // do React e deixava a tela totalmente em branco. Alem disso, este objeto
+  // antes era recriado a cada render; agora e memoizado.
+  const sync = useMemo<OfflineContextValue["sync"]>(
+    () => ({
+      getPendingSync: async (limit?: number) => (repository ? repository.getPendingSync(limit) : []),
+      markSynced: async (id: string) => {
+        if (repository) await repository.markSynced(id);
+      },
+      incrementRetry: async (id: string) => {
+        if (repository) await repository.incrementRetry(id);
+      },
+      cleanupSynced: async () => (repository ? repository.cleanupSynced() : 0),
+      startAutoSync: async () => {
+        await syncEngine.startAutoSync();
+      },
+      stopAutoSync: () => {
+        syncEngine.stopAutoSync();
+      },
+    }),
+    [repository]
   );
+
+  const value = useMemo<OfflineContextValue>(
+    () => ({ repository, isReady, networkStatus, sync, initialize }),
+    [repository, isReady, networkStatus, sync, initialize]
+  );
+
+  return <OfflineContext.Provider value={value}>{children}</OfflineContext.Provider>;
 }
 
 export function useOffline() {

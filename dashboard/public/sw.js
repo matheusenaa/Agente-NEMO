@@ -1,9 +1,15 @@
 // SYNOP - Custom Service Worker
 // Provides offline caching for static assets and API responses
-
-const CACHE_NAME = "synop-v1";
-const STATIC_CACHE = "synop-static-v1";
-const API_CACHE = "synop-api-v1";
+//
+// CACHE_VERSION: incremente sempre que mudar o build. Sem isso, o "activate"
+// mantinha o cache antigo para sempre e o navegador servia um bundle antigo
+// (hashes antigos) que estourava em runtime -> tela branca que sobrevivia a
+// qualquer rebuild do servidor. Os nomes sao versionados e o activate apaga
+// TODOS os caches que nao sejam o par atual.
+const CACHE_VERSION = "v2";
+const CACHE_NAME = `synop-${CACHE_VERSION}`;
+const STATIC_CACHE = `synop-static-${CACHE_VERSION}`;
+const API_CACHE = `synop-api-${CACHE_VERSION}`;
 
 // Assets to cache on install
 const STATIC_ASSETS = [
@@ -22,18 +28,20 @@ self.addEventListener("install", (event) => {
   self.skipWaiting();
 });
 
-// Activate event - clean up old caches
+// Activate event - clean up old caches (qualquer cache de build anterior)
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames
-          .filter((name) => name !== STATIC_CACHE && name !== API_CACHE)
-          .map((name) => caches.delete(name))
-      );
-    })
+    caches
+      .keys()
+      .then((cacheNames) => {
+        return Promise.all(
+          cacheNames
+            .filter((name) => name !== STATIC_CACHE && name !== API_CACHE)
+            .map((name) => caches.delete(name))
+        );
+      })
+      .then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
 // Fetch event - serve from cache or network
@@ -134,7 +142,9 @@ async function fetchAndCache(request, cache) {
   try {
     const response = await fetch(request);
     if (response.ok) {
-      await cache.put(request, response);
+      // .clone() obrigatorio: o body ja foi consumido pelo fetch acima e
+      // cache.put() com o mesmo Response lancava "body already used".
+      await cache.put(request, response.clone());
     }
   } catch {
     // Ignore background update failures

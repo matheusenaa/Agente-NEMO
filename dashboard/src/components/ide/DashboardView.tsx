@@ -9,6 +9,7 @@ import { AgentAvatar } from "@/components/AgentAvatar";
 import { categoryMeta } from "./EventModal";
 import { pickPhrase } from "@/data/statusPhrases";
 import { BRAND } from "@/config/branding";
+import { BrandLogo } from "@/components/BrandLogo";
 
 interface AiHealth {
   providers_configured: { id: string; name: string; icon: string }[];
@@ -77,7 +78,9 @@ export function DashboardView() {
     <section className="view-area dash-wrap">
       <div className="dash-hero">
         <div className="dash-hero-text">
-          <div className="dash-eyebrow">CENTRAL DE OPERAÇÕES</div>
+          <div className="dash-eyebrow">
+            <BrandLogo size="sm" compact priority /> CENTRAL DE OPERAÇÕES
+          </div>
           <h1>Bem-vindo ao {BRAND.name}</h1>
           <p>
             Sua equipe de agentes está pronta. Converse, agende, trabalhe — tudo num ambiente único.

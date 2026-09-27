@@ -4,6 +4,7 @@ import { useAuthStore } from "@/store/useAuthStore";
 import { VIEWS } from "@/data/agents";
 import type { ViewId } from "@/types/idea";
 import { NetworkStatusIndicator } from "./NetworkStatusIndicator";
+import { BrandLogo } from "@/components/BrandLogo";
 import { BRAND } from "@/config/branding";
 
 function getUserName(): string {
@@ -39,7 +40,9 @@ export function TopBar() {
   return (
     <header className="ide-top">
       <div className="brand" onClick={() => setView("dashboard")} style={{ cursor: "pointer" }} title="Painel">
-        <div className="logo-nemo">{BRAND.icons.logo}</div>
+        <div className="logo-nemo">
+          <BrandLogo size="sm" compact />
+        </div>
         <div>
           <div className="brand-name">{BRAND.name}</div>
           <div className="brand-sub">{BRAND.ui.headerSubtitle}</div>
