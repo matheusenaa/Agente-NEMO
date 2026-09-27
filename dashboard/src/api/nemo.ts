@@ -208,4 +208,52 @@ export const nemoApi = {
   async deleteTask(id: string): Promise<{ ok: boolean }> {
     return request(`/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
+
+  // ---- Sincronização Offline-First (missão §11-15) ----
+  async syncPush(operations: SyncOperation[], lastSync?: number): Promise<SyncPushResponse> {
+    return request("/sync/push", { method: "POST", body: JSON.stringify({ operations, last_sync: lastSync }) });
+  },
+  async syncPull(since?: number, stores?: string[]): Promise<SyncPullResponse> {
+    const params = new URLSearchParams();
+    if (since) params.set("since", String(since));
+    if (stores?.length) params.set("stores", stores.join(","));
+    return request(`/sync/pull${params.toString() ? `?${params}` : ""}`);
+  },
+  async syncResolveConflicts(conflicts: SyncConflict[]): Promise<SyncConflictResponse> {
+    return request("/sync/conflicts", { method: "POST", body: JSON.stringify({ conflicts }) });
+  },
 };
+
+// Sync Types
+export interface SyncOperation {
+  operation: "create" | "update" | "delete";
+  store: "conversations" | "messages" | "memories" | "tasks" | "events" | "ai_keys" | "ai_settings" | "profile" | "activity_logs" | "web_searches";
+  data: Record<string, any>;
+  client_id: string;
+  timestamp: number;
+}
+
+export interface SyncPushResponse {
+  ok: boolean;
+  results: Array<{ client_id: string; status: "ok" | "conflict" | "error"; server_id?: string; conflict?: boolean; error?: string }>;
+  conflicts: Array<{ client_id: string; store: string; server_data: any; local_data: any }>;
+  server_version: number;
+}
+
+export interface SyncPullResponse {
+  ok: boolean;
+  changes: Record<string, any[]>;
+  server_version: number;
+}
+
+export interface SyncConflict {
+  client_id: string;
+  store: string;
+  resolution: "local-wins" | "remote-wins" | "merge";
+  resolved_data?: any;
+}
+
+export interface SyncConflictResponse {
+  ok: boolean;
+  results: Array<{ client_id: string; status: "resolved" | "error"; error?: string }>;
+}

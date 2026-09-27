@@ -94,6 +94,12 @@ class DataStore:
     # ---- busca web persistida ----
     def save_search(self, user_id: str, agent_id: str, query: str, provider: str, results: List[Dict[str, Any]]) -> None: ...
 
+    # ---- sincronização offline-first (missão §11-15) ----
+    def get_changes_since(self, user_id: str, since_sync_version: int, stores: Optional[List[str]] = None) -> Dict[str, List[Dict[str, Any]]]: ...
+    def apply_sync_operations(self, user_id: str, operations: List[Dict[str, Any]]) -> List[Dict[str, Any]]: ...
+    def get_sync_metadata(self, user_id: str) -> Dict[str, Any]: ...
+    def update_sync_metadata(self, user_id: str, data: Dict[str, Any]) -> None: ...
+
 
 # ---------------------------------------------------------------------------
 # Fallback local (JSON em _data/users/<id>/)
@@ -187,6 +193,36 @@ class LocalStore(DataStore):
         if len(remaining) == len(convs):
             return False
         _write_json(self._f(user_id, "conversations.json"), remaining)
+        return True
+
+    def update_conversation(self, user_id: str, conversation_id: str, patch: Dict[str, Any]) -> bool:
+        convs = _read_json(self._f(user_id, "conversations.json"), [])
+        for c in convs:
+            if c.get("id") == conversation_id:
+                c.update(patch)
+                c["updated_at"] = _now_ms()
+                _write_json(self._f(user_id, "conversations.json"), convs)
+                return True
+        return False
+
+    # ---- eventos ----
+    def list_events(self, user_id: str) -> List[Dict[str, Any]]:
+        events = _read_json(self._f(user_id, "events.json"), [])
+        events.sort(key=lambda e: (e.get("date", ""), e.get("time", "")))
+        return events
+
+    def save_event(self, event: Dict[str, Any]) -> None:
+        events = _read_json(self._f(user_id, "events.json"), [])
+        events = [e for e in events if e.get("id") != event.get("id")]
+        events.insert(0, event)
+        _write_json(self._f(user_id, "events.json"), events[:500])
+
+    def delete_event(self, user_id: str, event_id: str) -> bool:
+        events = _read_json(self._f(user_id, "events.json"), [])
+        remaining = [e for e in events if e.get("id") != event_id]
+        if len(remaining) == len(events):
+            return False
+        _write_json(self._f(user_id, "events.json"), remaining)
         return True
 
     # ---- perfil do usuário ----
@@ -322,6 +358,84 @@ class LocalStore(DataStore):
             "results": results[:20], "created_at": _now_iso(),
         })
         _write_json(self._f(user_id, "searches.json"), searches[:300])
+
+    # ---- sincronização offline-first (missão §11-15) ----
+    def _get_sync_metadata_file(self, user_id: str) -> Path:
+        return self._f(user_id, "sync_metadata.json")
+
+    def get_changes_since(self, user_id: str, since_sync_version: int, stores: Optional[List[str]] = None) -> Dict[str, List[Dict[str, Any]]]:
+        all_stores = ["conversations", "messages", "memories", "tasks", "events", "ai_keys", "ai_settings", "profile", "activity_logs", "web_searches"]
+        target_stores = stores if stores else all_stores
+        changes: Dict[str, List[Dict[str, Any]]] = {}
+        for store in target_stores:
+            items = _read_json(self._f(user_id, f"{store}.json"), [])
+            if store == "ai_keys":
+                items = [{"id": k, **v} for k, v in items.items()]
+            elif store == "ai_settings" or store == "profile":
+                items = [items] if items else []
+            filtered = [item for item in items if item.get("sync_version", 0) > since_sync_version]
+            if filtered:
+                changes[store] = filtered
+        return changes
+
+    def apply_sync_operations(self, user_id: str, operations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        results = []
+        for op in operations:
+            client_id = op.get("client_id")
+            store = op.get("store")
+            operation = op.get("operation")
+            data = op.get("data", {})
+            try:
+                if store == "conversations":
+                    if operation == "create":
+                        conv = self.create_conversation(user_id, data.get("agent_id", "nemo"), data.get("title", "Nova conversa"))
+                        results.append({"client_id": client_id, "status": "ok", "server_id": conv.get("id")})
+                    elif operation == "update":
+                        self.update_conversation(data["id"], data)
+                        results.append({"client_id": client_id, "status": "ok", "server_id": data["id"]})
+                    elif operation == "delete":
+                        self.delete_conversation(user_id, data["id"])
+                        results.append({"client_id": client_id, "status": "ok", "server_id": data["id"]})
+                elif store == "memories":
+                    if operation == "create":
+                        mem = self.save_memory(user_id, data.get("agent_id", "nemo"), data.get("content", ""), data.get("kind", "obs"))
+                        results.append({"client_id": client_id, "status": "ok", "server_id": mem.get("id")})
+                    elif operation == "delete":
+                        self.delete_memory(user_id, data["id"])
+                        results.append({"client_id": client_id, "status": "ok", "server_id": data["id"]})
+                elif store == "tasks":
+                    if operation in ("create", "update"):
+                        self.save_task(user_id, data)
+                        results.append({"client_id": client_id, "status": "ok", "server_id": data.get("id")})
+                    elif operation == "delete":
+                        self.delete_task(user_id, data["id"])
+                        results.append({"client_id": client_id, "status": "ok", "server_id": data["id"]})
+                elif store == "events":
+                    if operation in ("create", "update"):
+                        self.save_event(data)
+                        results.append({"client_id": client_id, "status": "ok", "server_id": data.get("id")})
+                    elif operation == "delete":
+                        self.delete_event(user_id, data["id"])
+                        results.append({"client_id": client_id, "status": "ok", "server_id": data["id"]})
+                elif store == "profile":
+                    self.save_profile(user_id, data)
+                    results.append({"client_id": client_id, "status": "ok", "server_id": "profile"})
+                elif store == "ai_settings":
+                    self.save_ai_settings(user_id, data)
+                    results.append({"client_id": client_id, "status": "ok", "server_id": "ai_settings"})
+                else:
+                    results.append({"client_id": client_id, "status": "error", "error": f"Store {store} not supported"})
+            except Exception as exc:
+                results.append({"client_id": client_id, "status": "error", "error": str(exc)})
+        return results
+
+    def get_sync_metadata(self, user_id: str) -> Dict[str, Any]:
+        return _read_json(self._get_sync_metadata_file(user_id), {"sync_version": 0})
+
+    def update_sync_metadata(self, user_id: str, data: Dict[str, Any]) -> None:
+        current = self.get_sync_metadata(user_id)
+        current.update(data)
+        _write_json(self._get_sync_metadata_file(user_id), current)
 
 
 # ---------------------------------------------------------------------------
@@ -552,6 +666,56 @@ class SupabaseStore(DataStore):
             "user_id": user_id, "agent_id": agent_id, "query": query, "provider": provider,
             "results": results[:20], "created_at": _now_iso(),
         }).execute()
+
+    # ---- sincronização offline-first (missão §11-15) ----
+    def get_changes_since(self, user_id: str, since_sync_version: int, stores: Optional[List[str]] = None) -> Dict[str, List[Dict[str, Any]]]:
+        if not self.enabled:
+            return {}
+        try:
+            store_param = stores if stores else None
+            res = self.client.rpc("get_changes_since", {
+                "p_user_id": user_id,
+                "p_since_sync_version": since_sync_version,
+                "p_stores": store_param,
+            }).execute()
+            changes: Dict[str, List[Dict[str, Any]]] = {}
+            for row in (res.data or []):
+                store = row.get("store")
+                if store:
+                    changes.setdefault(store, []).append(row)
+            return changes
+        except Exception:
+            return {}
+
+    def apply_sync_operations(self, user_id: str, operations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not self.enabled:
+            return [{"status": "error", "error": "Supabase not enabled"} for _ in operations]
+        try:
+            res = self.client.rpc("apply_sync_operations", {
+                "p_user_id": user_id,
+                "p_operations": operations,
+            }).execute()
+            return list(res.data or [])
+        except Exception as exc:
+            return [{"status": "error", "error": str(exc)} for _ in operations]
+
+    def get_sync_metadata(self, user_id: str) -> Dict[str, Any]:
+        if not self.enabled:
+            return {"sync_version": 0}
+        try:
+            data = self._t("sync_metadata").select("*").eq("user_id", user_id).execute().data
+            return data[0] if data else {"sync_version": 0}
+        except Exception:
+            return {"sync_version": 0}
+
+    def update_sync_metadata(self, user_id: str, data: Dict[str, Any]) -> None:
+        if not self.enabled:
+            return
+        payload = {"user_id": user_id, **data, "updated_at": _now_iso()}
+        try:
+            self._t("sync_metadata").upsert(payload, on_conflict="user_id").execute()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

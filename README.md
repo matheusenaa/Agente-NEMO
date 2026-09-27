@@ -4,64 +4,85 @@
 [![Python: 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Render Deploy](https://img.shields.io/badge/Render-deploy-green.svg)](https://render.com)
 [![GitHub](https://img.shields.io/badge/GitHub-repo-black.svg)](https://github.com/matheusenaa/Agente-NEMO)
+[![PWA Ready](https://img.shields.io/badge/PWA-ready-purple.svg)](https://web.dev/progressive-web-apps/)
+[![Offline First](https://img.shields.io/badge/Offline--First-enabled-orange.svg)](OFFLINE.md)
+[![Mobile Ready](https://img.shields.io/badge/Mobile-Capacitor-blue.svg)](MOBILE.md)
 
 **NEMO** é o seu **coordenador pessoal de agentes de IA** com identidade visual de **Vasco da Gama** 🔵⚪ (o time adversário não aparece 👀).
 
 Ele orquestra uma equipe especializada de agentes (cada um com personalidade, modelo padrão no OpenRouter e fallbacks automáticos) construída **por você, para o seu trabalho real**: finanças, dados, pesquisa, redação, revisão, design, vídeo, redes sociais, SEO, publicação e TI (o JARVIS, engenheiro de software sênior).
 
-> ✌️ Duas formas de uso (ambas funcionam juntas):
-> - **Chat + Escritório 2D** no dashboard React (Phaser)
-> - **Chat pela IDE/terminal** no backend FastAPI
+> ✌️ Três formas de uso (todas funcionam juntas):
+> - **Web PWA** — Instalável, offline-first, sync automático
+> - **Desktop** — PyInstaller (Windows) ou Tauri (planejado)
+> - **Mobile** — Capacitor (Android APK/AAB + iOS)
 
 ---
 
-## 🗺️ Visão geral
+## 🗺️ Visão geral da Arquitetura
 
 ```
 NEMO/
-├── nemo_server.py              # Backend FastAPI — chat, arquivos, terminal, snapshot e dashboard
-├── ai_providers.py             # Camada abstrata de IA: Gemini, Groq, OpenAI, OpenRouter
-├── ai_keys.py                  # Cofre criptografado das API Keys dos usuários (Fernet)
-├── web_search.py               # Busca na web: DuckDuckGo (padrão), Tavily e Brave
-├── data_store.py               # Camada de dados: Supabase ou fallback JSON local
-├── supabase/migrations/        # SQL do schema + RLS (habilitar NEMO em nuvem)
-├── openrouter_client.py        # Cliente OpenRouter (chat, modelos, fallbacks)
-├── models_config.py            # Configuração dos modelos com fallbacks
-├── start_nemo.py               # Launcher universal (Windows/Linux/Antigravity) + diagnóstico
-├── agents/*.agent.md           # Personas completas de cada agente
-├── requirements.txt
-├── .env.example
-├── render.yaml                  # Configuração de deploy (Render)
-├── Procfile                     # Web: uvicorn ... (Render/Railway/etc)
-├── runtime.txt                  # Versão do Python para produção
-├── NEMO_IDE.spec                # Build do executável (PyInstaller one-folder)
-├── NEMO_START.bat               # Launcher 1-clique no Windows
-├── NEMO_DIAGNOSTICO.bat         # Diagnóstico 1-clique no Windows
-├── start_nemo.bat               # Produção 1-clique (backend + dashboard compilado)
-├── start_nemo_dev.bat           # Dev: backend (8798) + Vite HMR (5173)
-├── test_client_unit.py          # Testes unitários do backend
-├── test_ai_providers.py         # Testes da camada de IA
-├── test_ai_keys.py              # Testes do cofre de chaves
-├── test_web_search.py           # Testes da busca web
-├── test_data_store.py           # Testes da camada de dados
-└── dashboard/                   # Frontend — a IDE NEMO
-    ├── index.html
-    ├── vite.config.ts           # alias @ + proxy /api/nemo
-    └── src/
-        ├── main.tsx / App.tsx / AppShell.tsx
-        ├── api/nemo.ts          # Cliente HTTP do backend
-        ├── store/               # useIdeStore (zustand), store do quclube, squads
-        ├── data/                # agentes, temas, status/frases, agentes config
-        ├── hooks/               # useNemoChat, useSquadSocket, useSquads
-        ├── office/              # Cena Phaser do escritório 2D
-        ├── components/ide/      # AppShell, TopBar, AgentSidebar, ChatView,
-        │                       #   CodeEditor, FileExplorer, TerminalView,
-        │                       #   TasksView, HistoryView, SettingsView,
-        │                       #   ContextPanel, NotificationsLayer, OfficeView,
-        │                       #   AiSettingsCard (Central de IA)
-        ├── lib/                 # renderMarkdown, syntax highlighting, id
-        └── styles/              # globals.css, themes.css, ide.css
+├── BACKEND (FastAPI)
+│   ├── nemo_server.py              # API principal: chat, files, terminal, auth, sync
+│   ├── ai_providers.py             # Camada abstrata: Gemini, Groq, OpenAI, OpenRouter
+│   ├── ai_keys.py                  # Cofre criptografado (Fernet)
+│   ├── data_store.py               # DataStore: Supabase + LocalStore (offline-first)
+│   ├── openrouter_client.py        # Cliente OpenRouter com fallbacks
+│   ├── models_config.py            # 10 modelos + fallbacks inteligentes
+│   ├── auth.py / auth_supabase.py  # Auth multi-user + OAuth (Google/Microsoft/Apple)
+│   ├── supabase/migrations/        # Schema PostgreSQL + RLS + Sync metadata
+│   └── requirements.txt / render.yaml / Procfile
+│
+├── FRONTEND (React 19 + Vite + TypeScript)
+│   ├── dashboard/
+│   │   ├── src/
+│   │   │   ├── lib/offline/        # IndexedDB + Repository + Sync Engine
+│   │   │   ├── hooks/useNetworkStatus.ts  # Detecção online/offline
+│   │   │   ├── hooks/useCapacitor.ts      # Plugins nativos mobile
+│   │   │   ├── components/ide/NetworkStatusIndicator.tsx
+│   │   │   └── api/nemo.ts              # Cliente API + sync endpoints
+│   │   ├── public/
+│   │   │   ├── sw.js                 # Service Worker customizado
+│   │   │   └── manifest.webmanifest  # PWA Manifest
+│   │   └── vite.config.ts            # VitePWA + code splitting
+│   │
+├── MOBILE (Capacitor)
+│   ├── dashboard/android/           # Projeto Android (Kotlin)
+│   ├── dashboard/ios/               # Projeto iOS (Swift)
+│   └── capacitor.config.ts          # Config plugins (Splash, Notifications, etc.)
+│
+├── DESKTOP
+│   ├── NEMO_IDE.spec               # PyInstaller one-folder (Windows)
+│   └── start_nemo.bat              # Launcher produção
+│
+├── DOCS
+│   ├── OFFLINE.md                  # Guia offline-first + sync
+│   ├── MOBILE.md                   # Guia Capacitor (Android/iOS)
+│   ├── DEPLOY.md                   # Guia deploy Render + Supabase
+│   └── README.md                   # Este arquivo
+│
+└── AGENTS (12 personas .agent.md)
+    ├── nemo, jarvis, analista, pesquisador, redator, revisor
+    ├── designer, criador-video, estrategista, gestor-redes
+    ├── editor-publicador, seo
 ```
+
+---
+
+## ✨ Novidades da Migração Multiplataforma
+
+| Feature | Status | Detalhes |
+|---------|--------|----------|
+| **PWA (Progressive Web App)** | ✅ | Service Worker, Manifest, Install prompt, Cache offline |
+| **Offline-First** | ✅ | IndexedDB (IndexedDBManager), Repository Pattern, Sync Engine |
+| **Sincronização** | ✅ | Push/Pull/Conflicts via `/api/nemo/sync/*` |
+| **Resolução de Conflitos** | ✅ | Local-wins / Remote-wins / Merge / Manual |
+| **Mobile (Capacitor)** | ✅ | Android + iOS, 7 plugins nativos |
+| **Desktop (PyInstaller)** | ✅ | One-folder, launcher 1-clique |
+| **Tauri (Desktop Leve)** | 📋 | Planejado para substituir PyInstaller |
+| **Segurança** | ✅ | CSP, Rate Limits, Origin Guard, CSP Headers |
+| **Code Splitting** | ✅ | Chunks: phaser, zustand, yaml, vendor |
 
 ---
 
@@ -74,6 +95,8 @@ NEMO/
 > - Executável: `dist\NEMO_IDE\NEMO_IDE.exe`
 > - Antigravity/Linux: `python start_nemo.py --host 0.0.0.0`
 > - Primeiro administrador: `python start_nemo.py --create-admin`
+> - **PWA**: `cd dashboard && npm run build` → abre `dist/` no navegador → "Instalar NEMO"
+> - **Mobile**: `cd dashboard && npm run build && npx cap sync && npx cap open android`
 
 ### 0. Instalação
 

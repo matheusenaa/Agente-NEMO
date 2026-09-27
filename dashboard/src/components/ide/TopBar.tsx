@@ -3,6 +3,7 @@ import { useIdeStore } from "@/store/useIdeStore";
 import { useAuthStore } from "@/store/useAuthStore";
 import { VIEWS } from "@/data/agents";
 import type { ViewId } from "@/types/idea";
+import { NetworkStatusIndicator } from "./NetworkStatusIndicator";
 
 function getUserName(): string {
   try {
@@ -54,6 +55,7 @@ export function TopBar() {
       </nav>
 
       <div className="top-right">
+        <NetworkStatusIndicator />
         <button className="icon-btn" title="Agentes (painel esquerdo)" onClick={() => toggleLeft()}>
           👥
         </button>

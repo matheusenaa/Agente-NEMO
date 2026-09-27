@@ -36,6 +36,18 @@ body[data-density="spacious"]{--den-pad:14px;--den-gap:12px;--den-rad:14px;--fs:
 .view-tab.on{background:var(--bg3);color:var(--accentText);border-color:var(--border)}
 
 .top-right{margin-left:auto;display:flex;align-items:center;gap:7px}
+.network-status-indicator{display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:9px;background:var(--bg2);border:1px solid var(--border);font-size:calc(var(--fs) - 3px);color:var(--text2);transition:all .2s}
+.network-status-indicator[data-status="online"]{border-color:var(--success);background:color-mix(in srgb,var(--success) 8%,var(--bg2))}
+.network-status-indicator[data-status="offline"]{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 8%,var(--bg2))}
+.network-status-indicator[data-status="reconnecting"],
+.network-status-indicator[data-status="syncing"]{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,var(--bg2))}
+.network-dot{width:7px;height:7px;border-radius:50%;background:var(--text3);transition:background .2s}
+.network-status-indicator[data-status="online"] .network-dot{background:var(--success);animation:pulse 1.5s infinite}
+.network-status-indicator[data-status="offline"] .network-dot{background:var(--warn)}
+.network-status-indicator[data-status="reconnecting"] .network-dot,
+.network-status-indicator[data-status="syncing"] .network-dot{background:var(--accent);animation:pulse 1s infinite}
+.network-icon{font-size:calc(var(--fs) - 2px)}
+.network-label{font-size:calc(var(--fs) - 3px);color:var(--text2);white-space:nowrap}
 .icon-btn{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;color:var(--text2);cursor:pointer;font-size:15px;position:relative;transition:all .18s}
 .icon-btn:hover{background:var(--bg3);color:var(--text);border-color:var(--border)}
 .icon-btn .dot-badge{position:absolute;top:4px;right:4px;min-width:15px;height:15px;border-radius:9px;background:var(--danger);color:#fff;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 3px}

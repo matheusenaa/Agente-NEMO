@@ -1,0 +1,36 @@
+{
+  "name": "NEMO IDE",
+  "short_name": "NEMO",
+  "description": "Seu coordenador pessoal de agentes de IA com escritório 2D",
+  "theme_color": "#0b6e4f",
+  "background_color": "#0f0a14",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "start_url": "/",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐟</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["productivity", "utilities", "developer-tools"],
+  "shortcuts": [
+    {
+      "name": "Chat NEMO",
+      "short_name": "Chat",
+      "description": "Conversar com o NEMO",
+      "url": "/?view=chat",
+      "icons": [{ "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>", "sizes": "96x96" }]
+    },
+    {
+      "name": "Escritório 2D",
+      "short_name": "Escritório",
+      "description": "Ver a equipe no escritório",
+      "url": "/?view=office",
+      "icons": [{ "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏢</text></svg>", "sizes": "96x96" }]
+    }
+  ]
+}

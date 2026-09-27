@@ -161,6 +161,14 @@ class _SlidingWindowRateLimit:
 
 AI_RATE_LIMITER = _SlidingWindowRateLimit(AI_REQUEST_LIMIT_PER_MINUTE)
 
+# General API rate limiter (per IP)
+API_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("NEMO_API_RATE_LIMIT", "120")))
+API_RATE_LIMITER = _SlidingWindowRateLimit(API_RATE_LIMIT_PER_MINUTE)
+
+# Sync rate limiter (more permissive)
+SYNC_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("NEMO_SYNC_RATE_LIMIT", "60")))
+SYNC_RATE_LIMITER = _SlidingWindowRateLimit(SYNC_RATE_LIMIT_PER_MINUTE)
+
 DEFAULT_HOST = os.getenv("HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.getenv("PORT", "8798"))
 
@@ -616,6 +624,33 @@ def _squads_snapshot() -> Dict[str, Any]:
 
 app = FastAPI(title=f"{PROJECT_NAME} API", version=VERSION)
 
+# Security Headers Middleware
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    # Content Security Policy
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com data:; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self' https://*.supabase.co https://openrouter.ai https://api.groq.com https://api.openai.com https://generativelanguage.googleapis.com; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+    # Additional security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    # HSTS for production (only if HTTPS)
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
 # CORS — origens locais por padrão + extras via CORS_ORIGINS (produção/antigravity)
 _cors_origins = [
     "http://localhost:5173",
@@ -651,6 +686,28 @@ async def origin_guard(request: Request, call_next):
                 return JSONResponse({"detail": "Origem da requisição não permitida."}, status_code=403)
             if not origin and fetch_site == "cross-site":
                 return JSONResponse({"detail": "Origem da requisição não permitida."}, status_code=403)
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Rate limiting por IP para endpoints gerais da API."""
+    if request.url.path.startswith("/api/"):
+        if request.url.path.startswith("/api/nemo/chat"):
+            pass  # Chat já tem seu próprio rate limit por usuário
+        elif request.url.path.startswith("/api/nemo/sync"):
+            limiter = SYNC_RATE_LIMITER
+            key = f"sync:{request.client.host}" if request.client else "sync:unknown"
+        else:
+            limiter = API_RATE_LIMITER
+            key = f"api:{request.client.host}" if request.client else "api:unknown"
+        
+        if 'limiter' in locals() and not limiter.allow(key):
+            return JSONResponse(
+                {"detail": "Rate limit exceeded. Please slow down."},
+                status_code=429,
+                headers={"Retry-After": "60"}
+            )
     return await call_next(request)
 
 
@@ -1696,6 +1753,273 @@ def tasks_delete(task_id: str, request: Request) -> Dict[str, Any]:
     if not ok:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada.")
     return {"ok": True, "deleted": task_id}
+
+
+# ---------------------------------------------------------------------------
+# Sincronização Offline-First — missão §11-15
+# ---------------------------------------------------------------------------
+
+
+class SyncOperation(BaseModel):
+    operation: Literal["create", "update", "delete"]
+    store: Literal[
+        "conversations", "messages", "memories", "tasks", "events",
+        "ai_keys", "ai_settings", "profile", "activity_logs", "web_searches"
+    ]
+    data: Dict[str, Any]
+    client_id: str
+    timestamp: int
+
+
+class SyncPushRequest(BaseModel):
+    operations: List[SyncOperation]
+    last_sync: Optional[int] = None
+
+
+class SyncPullRequest(BaseModel):
+    since: Optional[int] = None
+    stores: Optional[List[str]] = None
+
+
+class ConflictResolutionRequest(BaseModel):
+    conflicts: List[Dict[str, Any]]
+
+
+@app.post("/api/nemo/sync/push")
+def sync_push(req: SyncPushRequest, request: Request) -> Dict[str, Any]:
+    """Recebe operações locais do cliente e aplica no servidor.
+    Retorna operações aplicadas com sucesso e conflitos detectados."""
+    user = _require_user(request)
+    user_id = user["id"]
+
+    results: List[Dict[str, Any]] = []
+    conflicts: List[Dict[str, Any]] = []
+    server_version = int(time.time() * 1000)
+
+    for op in req.operations:
+        try:
+            result = _apply_sync_operation(user_id, op)
+            if result.get("conflict"):
+                conflicts.append({
+                    "client_id": op.client_id,
+                    "store": op.store,
+                    "server_data": result.get("server_data"),
+                    "local_data": op.data,
+                })
+                results.append({"client_id": op.client_id, "status": "conflict", "conflict": True})
+            else:
+                results.append({"client_id": op.client_id, "status": "ok", "server_id": result.get("server_id")})
+        except Exception as exc:
+            results.append({"client_id": op.client_id, "status": "error", "error": str(exc)})
+
+    return {
+        "ok": True,
+        "results": results,
+        "conflicts": conflicts,
+        "server_version": server_version,
+    }
+
+
+@app.get("/api/nemo/sync/pull")
+def sync_pull(
+    request: Request,
+    since: Optional[int] = Query(None, description="Timestamp da última sincronização"),
+    stores: Optional[str] = Query(None, description="Lojas separadas por vírgula"),
+) -> Dict[str, Any]:
+    """Retorna mudanças no servidor desde `since`."""
+    user = _require_user(request)
+    user_id = user["id"]
+
+    store_list = [s.strip() for s in (stores or "").split(",") if s.strip()] or [
+        "conversations", "messages", "memories", "tasks", "events",
+        "ai_keys", "ai_settings", "profile", "activity_logs", "web_searches"
+    ]
+
+    changes: Dict[str, List[Dict[str, Any]]] = {}
+    server_version = int(time.time() * 1000)
+
+    for store in store_list:
+        try:
+            items = _get_store_changes_since(user_id, store, since or 0)
+            if items:
+                changes[store] = items
+        except Exception:
+            changes[store] = []
+
+    return {
+        "ok": True,
+        "changes": changes,
+        "server_version": server_version,
+    }
+
+
+@app.post("/api/nemo/sync/conflicts")
+def sync_resolve_conflicts(req: ConflictResolutionRequest, request: Request) -> Dict[str, Any]:
+    """Resolve conflitos enviados pelo cliente (local-wins, remote-wins, merge)."""
+    user = _require_user(request)
+    user_id = user["id"]
+
+    results: List[Dict[str, Any]] = []
+
+    for conflict in req.conflicts:
+        try:
+            client_id = conflict.get("client_id")
+            store = conflict.get("store")
+            resolution = conflict.get("resolution", "local-wins")
+            resolved_data = conflict.get("resolved_data")
+
+            if resolution == "local-wins":
+                _apply_local_wins(user_id, store, resolved_data)
+            elif resolution == "remote-wins":
+                pass
+            elif resolution == "merge" and resolved_data:
+                _apply_merge(user_id, store, resolved_data)
+
+            results.append({"client_id": client_id, "status": "resolved"})
+        except Exception as exc:
+            results.append({"client_id": conflict.get("client_id"), "status": "error", "error": str(exc)})
+
+    return {"ok": True, "results": results}
+
+
+def _apply_sync_operation(user_id: str, op: SyncOperation) -> Dict[str, Any]:
+    """Aplica uma operação de sync. Retorna {'conflict': True, 'server_data': ...} se houver conflito."""
+    store = op.store
+    data = op.data
+    operation = op.operation
+
+    if store == "conversations":
+        if operation == "create":
+            conv = DATA_STORE.create_conversation(user_id, data.get("agent_id", "nemo"), data.get("title", "Nova conversa"))
+            return {"server_id": conv.get("id")}
+        elif operation == "update":
+            DATA_STORE.update_conversation(data["id"], data)
+            return {"server_id": data["id"]}
+        elif operation == "delete":
+            DATA_STORE.delete_conversation(user_id, data["id"])
+            return {"server_id": data["id"]}
+
+    elif store == "messages":
+        if operation == "create":
+            DATA_STORE.append_message(user_id, data["conversation_id"], data["role"], data["content"], data.get("meta"))
+            return {"server_id": "created"}
+        elif operation == "delete":
+            pass
+
+    elif store == "memories":
+        if operation == "create":
+            mem = DATA_STORE.save_memory(user_id, data.get("agent_id", "nemo"), data["content"], data.get("kind", "obs"))
+            return {"server_id": mem.get("id")}
+        elif operation == "update":
+            pass
+        elif operation == "delete":
+            DATA_STORE.delete_memory(user_id, data["id"])
+            return {"server_id": data["id"]}
+
+    elif store == "tasks":
+        if operation in ("create", "update"):
+            DATA_STORE.save_task(user_id, data)
+            return {"server_id": data.get("id")}
+        elif operation == "delete":
+            DATA_STORE.delete_task(user_id, data["id"])
+            return {"server_id": data["id"]}
+
+    elif store == "events":
+        if operation in ("create", "update"):
+            DATA_STORE.save_event(user_id, data)
+            return {"server_id": data.get("id")}
+        elif operation == "delete":
+            DATA_STORE.delete_event(user_id, data["id"])
+            return {"server_id": data["id"]}
+
+    elif store == "profile":
+        DATA_STORE.save_profile(user_id, data)
+        return {"server_id": "profile"}
+
+    elif store == "ai_settings":
+        DATA_STORE.save_ai_settings(user_id, data)
+        return {"server_id": "ai_settings"}
+
+    elif store == "ai_keys":
+        if operation in ("create", "update"):
+            DATA_STORE.save_api_key(user_id, data["provider"], data["encrypted_key"], data["masked"], data.get("model", ""), data.get("verified", False))
+            return {"server_id": data["provider"]}
+        elif operation == "delete":
+            DATA_STORE.delete_api_key(user_id, data["provider"])
+            return {"server_id": data["provider"]}
+
+    return {"server_id": "unknown"}
+
+
+def _get_store_changes_since(user_id: str, store: str, since: int) -> List[Dict[str, Any]]:
+    """Retorna itens modificados desde `since` (ms epoch)."""
+    items: List[Dict[str, Any]] = []
+
+    try:
+        if store == "conversations":
+            items = DATA_STORE.list_conversations(user_id)
+        elif store == "memories":
+            items = DATA_STORE.list_memories(user_id)
+        elif store == "tasks":
+            items = DATA_STORE.list_tasks(user_id)
+        elif store == "events":
+            items = DATA_STORE.list_events()
+        elif store == "ai_keys":
+            items = DATA_STORE.list_api_keys(user_id)
+        elif store == "profile":
+            items = [DATA_STORE.get_profile(user_id)]
+        elif store == "ai_settings":
+            items = [DATA_STORE.get_ai_settings(user_id)]
+    except Exception:
+        pass
+
+    filtered = []
+    for item in items:
+        updated = item.get("updated_at") or item.get("created_at") or item.get("updatedAt") or 0
+        if isinstance(updated, str):
+            try:
+                updated = int(datetime.fromisoformat(updated.replace("Z", "+00:00")).timestamp() * 1000)
+            except Exception:
+                updated = 0
+        if updated > since:
+            filtered.append(item)
+
+    return filtered
+
+
+def _apply_local_wins(user_id: str, store: str, data: Dict[str, Any]) -> None:
+    """Força dados locais no servidor."""
+    if store == "conversations":
+        DATA_STORE.update_conversation(data["id"], data)
+    elif store == "memories":
+        pass
+    elif store == "tasks":
+        DATA_STORE.save_task(user_id, data)
+    elif store == "events":
+        DATA_STORE.save_event(user_id, data)
+    elif store == "profile":
+        DATA_STORE.save_profile(user_id, data)
+    elif store == "ai_settings":
+        DATA_STORE.save_ai_settings(user_id, data)
+
+
+def _apply_merge(user_id: str, store: str, data: Dict[str, Any]) -> None:
+    """Merge simples: sobrescreve campos não-nulos do local no servidor."""
+    if store == "conversations":
+        existing = None
+        for c in DATA_STORE.list_conversations(user_id):
+            if c.get("id") == data.get("id"):
+                existing = c
+                break
+        if existing:
+            merged = {**existing, **{k: v for k, v in data.items() if v is not None}}
+            DATA_STORE.update_conversation(data["id"], merged)
+    elif store == "tasks":
+        DATA_STORE.save_task(user_id, data)
+    elif store == "events":
+        DATA_STORE.save_event(user_id, data)
+    elif store == "profile":
+        DATA_STORE.save_profile(user_id, data)
 
 
 def _is_auth_error(message: str) -> bool:

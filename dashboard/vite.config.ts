@@ -4,7 +4,10 @@ import path from "node:path";
 import { squadWatcherPlugin } from "./src/plugin/squadWatcher";
 
 export default defineConfig({
-  plugins: [react(), squadWatcherPlugin()],
+  plugins: [
+    react(),
+    squadWatcherPlugin(),
+  ],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
@@ -13,7 +16,6 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     proxy: {
-      // Backend NEMO (FastAPI) — python nemo_server.py
       "/api/nemo": {
         target: "http://127.0.0.1:8798",
         changeOrigin: true,
@@ -27,5 +29,16 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          phaser: ["phaser"],
+          zustand: ["zustand"],
+        },
+      },
+    },
+    chunkSizeWarningLimit: 2000,
   },
 });
