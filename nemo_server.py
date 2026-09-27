@@ -837,27 +837,47 @@ def liveness() -> Dict[str, Any]:
 
 @app.get("/api/nemo/health")
 def health(request: Request) -> Dict[str, Any]:
-    c = get_client()
+    """Health check detalhado.
+
+    Cada sonda e isolada: uma dependencia externa quebrada (Supabase sem
+    credencial, OpenRouter sem chave, pasta de squads inacessivel) NAO pode
+    transformar o diagnostic em HTTP 500 — no maximo o campo vem com o erro.
+    """
+
+    def probe(fn):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 - diagnostico nunca deve derrubar
+            return f"erro: {type(exc).__name__}: {exc}"[:200]
+
     ai = {
-        "providers_configured": [p for p in AI_SERVICE.provider_catalog() if p["configured"]],
-        "default_provider": AI_SERVICE.default_provider(),
-        "default_model": AI_SERVICE.default_provider_model(),
-        "web_search": WEB_SEARCH_SERVICE.available_providers(),
-        "store_backend": DATA_STORE.name,
-        "encryption": KEY_STORE.available,
+        "providers_configured": probe(
+            lambda: [p for p in AI_SERVICE.provider_catalog() if p["configured"]]
+        ),
+        "default_provider": probe(AI_SERVICE.default_provider),
+        "default_model": probe(AI_SERVICE.default_provider_model),
+        "web_search": probe(WEB_SEARCH_SERVICE.available_providers),
+        "store_backend": probe(lambda: DATA_STORE.name),
+        "encryption": probe(lambda: KEY_STORE.available),
     }
     return {
         "project": PROJECT_NAME,
         "version": VERSION,
         "time": datetime.now().isoformat(),
-        "api_key_configured": c.has_valid_key_format(),
-        "models": len(OPENROUTER_MODELS),
-        "agents": len(_discover_agents()),
-        "squads": len([d for d in SQUADS_DIR.iterdir() if d.is_dir() and not d.name.startswith((".", "_"))]) if SQUADS_DIR.is_dir() else 0,
+        "api_key_configured": probe(lambda: get_client().has_valid_key_format()),
+        "models": probe(lambda: len(OPENROUTER_MODELS)),
+        "agents": probe(lambda: len(_discover_agents())),
+        "squads": probe(
+            lambda: len(
+                [d for d in SQUADS_DIR.iterdir() if d.is_dir() and not d.name.startswith((".", "_"))]
+            )
+            if SQUADS_DIR.is_dir()
+            else 0,
+        ),
         "squad_ws": False,
         "auth": True,
         "ai": ai,
-        "authenticated": bool(_current_user(request)),
+        "authenticated": probe(lambda: bool(_current_user(request))),
     }
 
 
