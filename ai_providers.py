@@ -24,6 +24,8 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 import requests
 
+from models_config import OPENROUTER_MODELS
+
 load_dotenv()
 
 # ---------------------------------------------------------------------------
@@ -416,7 +418,11 @@ class AIProviderService:
             return GROQ_MODELS[0] if GROQ_MODELS else "openai/gpt-oss-20b"
         if provider == "openai":
             return OPENAI_MODELS[0] if OPENAI_MODELS else "gpt-4o-mini"
-        return OPENROUTER_MODELS[0] if OPENROUTER_MODELS else (key or "openrouter/auto")
+        # OPENROUTER_MODELS vem de models_config e sao ModelInfo (nao str),
+        # entao devolvemos o id — a funcao e declarada -> str.
+        if OPENROUTER_MODELS:
+            return OPENROUTER_MODELS[0].id
+        return key or "openrouter/auto"
 
     # ------------------------------------------------------------------
     # Execução
