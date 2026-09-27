@@ -8,6 +8,7 @@ import { eventSortDate } from "@/lib/calendar";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { categoryMeta } from "./EventModal";
 import { pickPhrase } from "@/data/statusPhrases";
+import { BRAND } from "@/config/branding";
 
 interface AiHealth {
   providers_configured: { id: string; name: string; icon: string }[];
@@ -77,13 +78,13 @@ export function DashboardView() {
       <div className="dash-hero">
         <div className="dash-hero-text">
           <div className="dash-eyebrow">CENTRAL DE OPERAÇÕES</div>
-          <h1>Bem-vindo à NEMO IDE</h1>
+          <h1>Bem-vindo ao {BRAND.name}</h1>
           <p>
             Sua equipe de agentes está pronta. Converse, agende, trabalhe — tudo num ambiente único.
             {liveStatus.busy && <span className="dash-live"> {getAgent(liveStatus.agentId).name} está {liveStatus.label}</span>}
           </p>
           <div className="dash-actions">
-            <button className="tool-btn primary" onClick={() => chatWith("nemo")}>💬 Conversar com NEMO</button>
+            <button className="tool-btn primary" onClick={() => chatWith("nemo")}>💬 Conversar com {BRAND.name}</button>
             <button className="tool-btn" onClick={() => go("office")}>🏢 Abrir escritório</button>
             <button className="tool-btn" onClick={() => go("calendar")}>📅 Novo evento</button>
           </div>
@@ -292,7 +293,7 @@ export function DashboardView() {
               </>
             ) : (
               <div className="dash-empty" style={{ margin: 0 }}>
-                Nenhuma chave de IA configurada — o NEMO responderá offline. Configure em ⚙️ Configurações.
+                Nenhuma chave de IA configurada — o {BRAND.name} responderá offline. Configure em ⚙️ Configurações.
               </div>
             )}
           </div>

@@ -63,7 +63,7 @@ export function MessageBubble({ message, showTimestamps }: Props) {
 
 function liveStatusPhrase(agentId?: string): string {
   const phrases: Record<string, string[]> = {
-    nemo: ["NEMO está processando...", "Investigando a melhor abordagem...", "Preparando sua resposta..."],
+    nemo: ["SYNOP está processando...", "Investigando a melhor abordagem...", "Preparando sua resposta..."],
     pesquisador: ["Pesquisando na web...", "Analisando fontes confiáveis...", "Compilando dados..."],
     redator: ["Escrevendo seu texto...", "Revisando clareza...", "Polindo frases..."],
     analista: ["Processando dados...", "Rodando cálculos...", "Montando gráficos..."],

@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { useIdeStore } from "@/store/useIdeStore";
 import { nemoApi } from "@/api/nemo";
+import { BRAND } from "@/config/branding";
 
 export function TerminalView() {
   const termLines = useIdeStore((s) => s.termLines);
@@ -49,7 +50,7 @@ export function TerminalView() {
       <div className="term-wrap">
         <div style={{ fontSize: 12, color: "var(--text3)", marginBottom: 4, display: "flex", gap: 6 }}>
           <span>🖥️</span>
-          <span>Terminal NEMO (seguro — comandos perigosos bloqueados por padrão)</span>
+          <span>Terminal {BRAND.name} (seguro — comandos perigosos bloqueados por padrão)</span>
           <button className="tool-btn" onClick={clearTerm} style={{ marginLeft: "auto", padding: "3px 10px" }}>Limpar</button>
         </div>
         <div style={{ flex: 1, overflowY: "auto" }}>

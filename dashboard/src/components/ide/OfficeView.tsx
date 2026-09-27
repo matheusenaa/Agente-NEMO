@@ -9,6 +9,7 @@ import { RoomBoundary, webglAvailable } from "./RoomBoundary";
 import { AGENT_ROSTER } from "@/data/agents";
 import { useSquadStore } from "@/store/useSquadStore";
 import { useIdeStore } from "@/store/useIdeStore";
+import { BRAND } from "@/config/branding";
 
 // Phaser é ~1MB — carregado só quando o usuário entra no modo visual (lazy).
 const PhaserGame = lazy(() =>
@@ -66,7 +67,7 @@ export function OfficeView({ roomId = "office" }: OfficeViewProps) {
       <div className="chat-head" style={{ gap: 8 }}>
         <span style={{ fontWeight: 700 }}>{meta.title}</span>
         <span style={{ color: "var(--text3)", fontSize: 12 }}>
-          {isConnected ? "🔗 ao vivo (WebSocket)" : "⭘ demonstrativo — equipe NEMO"}
+          {isConnected ? "🔗 ao vivo (WebSocket)" : `⭘ demonstrativo — equipe ${BRAND.name}`}
         </span>
         {selectedSquad && (
           <span style={{ color: "var(--accentText)", fontSize: 12 }}>squad: {selectedSquad}</span>

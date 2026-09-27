@@ -1,9 +1,9 @@
-// NEMO IDE - Custom Service Worker
+// SYNOP - Custom Service Worker
 // Provides offline caching for static assets and API responses
 
-const CACHE_NAME = "nemo-ide-v1";
-const STATIC_CACHE = "nemo-static-v1";
-const API_CACHE = "nemo-api-v1";
+const CACHE_NAME = "synop-v1";
+const STATIC_CACHE = "synop-static-v1";
+const API_CACHE = "synop-api-v1";
 
 // Assets to cache on install
 const STATIC_ASSETS = [

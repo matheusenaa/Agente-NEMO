@@ -10,13 +10,13 @@ if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").then(
       (registration) => {
-        console.log("[NEMO] SW registered:", registration.scope);
+        console.log("[SYNOP] SW registered:", registration.scope);
         registration.addEventListener("updatefound", () => {
           const newWorker = registration.installing;
           if (newWorker) {
             newWorker.addEventListener("statechange", () => {
               if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-                console.log("[NEMO] New version available, please refresh");
+                console.log("[SYNOP] New version available, please refresh");
                 // Could show a toast notification here
               }
             });
@@ -24,7 +24,7 @@ if ("serviceWorker" in navigator) {
         });
       },
       (error) => {
-        console.error("[NEMO] SW registration failed:", error);
+        console.error("[SYNOP] SW registration failed:", error);
       }
     );
   });

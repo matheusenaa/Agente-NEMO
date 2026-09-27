@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useIdeStore } from "@/store/useIdeStore";
 import { nemoApi } from "@/api/nemo";
 import type { FileNode } from "@/types/idea";
+import { BRAND } from "@/config/branding";
 
 const FILE_ICONS: Record<string, string> = {
   ts: "🟦", tsx: "🟦", js: "🟨", jsx: "🟨", mjs: "🟨",
@@ -54,7 +55,7 @@ export function FileExplorer() {
   return (
     <div className="file-tree">
       <div className="path-crumbs" style={{ borderBottom: "1px solid var(--border)" }}>
-        <span className="crumb" onClick={() => load("")}>🏠 NEMO</span>
+        <span className="crumb" onClick={() => load("")}>🏠 {BRAND.name}</span>
         {crumbs.map((c, i) => (
           <span key={i}>
             <span style={{ color: "var(--text3)" }}>›</span>

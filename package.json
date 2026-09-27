@@ -1,8 +1,12 @@
 {
-  "name": "opensquad-project",
+  "name": "synop-project",
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "synop": "python start_nemo.py",
+    "synop:check": "python start_nemo.py --check",
+    "synop:server": "python nemo_server.py",
+    "synop:dev": "python nemo_server.py --port 8798 & cd dashboard && npm run dev",
     "nemo": "python start_nemo.py",
     "nemo:check": "python start_nemo.py --check",
     "nemo:server": "python nemo_server.py",

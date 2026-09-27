@@ -4,6 +4,7 @@ import { useIdeStore } from "@/store/useIdeStore";
 import { getAgent } from "@/data/agents";
 import { OfflineProvider } from "@/lib/offline/OfflineProvider";
 import { useCapacitor, useAppLifecycle, isNative } from "@/lib/offline";
+import { BRAND } from "@/config/branding";
 
 export function App() {
   const { hideSplashScreen, setStatusBarStyle, setKeyboardResize, requestPermissions } = useCapacitor();
@@ -13,7 +14,7 @@ export function App() {
       const nemo = getAgent("nemo");
       useIdeStore.getState().notify({
         icon: nemo.icon,
-        text: `NEMO IDE ${isNative ? "mobile" : "online"} — ${nemo.name} pronto para trabalhar`,
+        text: `${BRAND.name} ${isNative ? "mobile" : "online"} — ${nemo.name} pronto para trabalhar`,
         tone: "ok",
       });
       hideSplashScreen();
@@ -30,8 +31,8 @@ export function App() {
   }, [isNative, setStatusBarStyle, setKeyboardResize, requestPermissions]);
 
   useAppLifecycle(
-    () => console.log("[NEMO] App paused"),
-    () => console.log("[NEMO] App resumed")
+    () => console.log(`[${BRAND.name}] App paused`),
+    () => console.log(`[${BRAND.name}] App resumed`)
   );
 
   return (

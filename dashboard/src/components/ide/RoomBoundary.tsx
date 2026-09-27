@@ -18,7 +18,7 @@ export class RoomBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.warn("[NEMO] Modo visual falhou, ativando painel alternativo:", error.message, info);
+    console.warn("[SYNOP] Modo visual falhou, ativando painel alternativo:", error.message, info);
   }
 
   render(): ReactNode {

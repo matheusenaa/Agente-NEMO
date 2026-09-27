@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useAuthStore } from "@/store/useAuthStore";
 import { AGENT_ROSTER } from "@/data/agents";
 import { AgentAvatar } from "@/components/AgentAvatar";
+import { BRAND } from "@/config/branding";
 
 type Mode = "login" | "register";
 
@@ -153,9 +154,9 @@ export function LoginView() {
 
       <div className="auth-card">
         <div className="auth-brand">
-          <div className="auth-logo">🐟</div>
-          <div className="auth-brandname">NEMO</div>
-          <div className="auth-brandsub">IDE · Agentes de IA · Ambiente privado</div>
+          <div className="auth-logo">{BRAND.icons.logo}</div>
+          <div className="auth-brandname">{BRAND.name}</div>
+          <div className="auth-brandsub">{BRAND.slogan}</div>
         </div>
 
         <div className="auth-agent-strip">
@@ -216,10 +217,10 @@ export function LoginView() {
             {busy
               ? "Aguarde..."
               : checking
-                ? "Verificando sessão..."
-                : mode === "login"
-                  ? "Entrar no NEMO"
-                  : "Criar conta"}
+              ? "Verificando sessão..."
+              : mode === "login"
+              ? BRAND.login.submitButton
+              : "Criar conta"}
           </button>
         </form>
 

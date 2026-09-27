@@ -19,6 +19,7 @@ import { HistoryView } from "./HistoryView";
 import { SettingsView } from "./SettingsView";
 import { ContextPanel } from "./ContextPanel";
 import { NotificationsLayer } from "./NotificationsLayer";
+import { BRAND } from "@/config/branding";
 
 function LogsView() {
   const logs = useIdeStore((s) => s.logs);
@@ -108,7 +109,7 @@ export function AppShell() {
     const nemo = getAgent("nemo");
     useIdeStore.getState().notify({
       icon: nemo.icon,
-      text: `Bem-vindo(a), ${authUser.name.split(" ")[0]}! 🐟 NEMO está pronto para trabalhar.`,
+      text: `Bem-vindo(a), ${authUser.name.split(" ")[0]}! 🐟 {BRAND.name} está pronto para trabalhar.`,
       tone: "ok",
     });
   }, [authUser]);
@@ -119,9 +120,9 @@ export function AppShell() {
     document.body.dataset.density = config.density;
     document.body.classList.toggle("no-anim", !config.animations);
     document.documentElement.style.setProperty("--fs", `${config.fontSize}px`);
-    document.title = `NEMO IDE · ${theme.name}`;
+    document.title = `${BRAND.name} — ${theme.name}`;
     const fav = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-    if (fav) fav.href = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐟</text></svg>`;
+    if (fav) fav.href = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>${BRAND.icons.favicon}</text></svg>`;
   }, [config.theme, config.density, config.animations, config.fontSize]);
 
   useEffect(() => {

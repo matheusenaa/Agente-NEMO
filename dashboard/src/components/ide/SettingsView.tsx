@@ -8,6 +8,7 @@ import { adminApi, type AuthUser } from "@/api/auth";
 import { useAuthStore } from "@/store/useAuthStore";
 import type { AiProfile } from "@/types/idea";
 import type { Density, IdeConfig, LayoutId } from "@/types/idea";
+import { BRAND } from "@/config/branding";
 
 function AdminUsersCard() {
   const notify = useIdeStore((s) => s.notify);
@@ -117,7 +118,7 @@ function AdminUsersCard() {
 }
 
 function resetAll() {
-  if (!window.confirm("Resetar TODAS as configurações da NEMO IDE?")) return;
+  if (!window.confirm(`Resetar TODAS as configurações da ${BRAND.name}?`)) return;
   clearPersistedIdeState();
   localStorage.removeItem("nemo-user-name");
   window.location.reload();

@@ -1,8 +1,8 @@
 {
-  "name": "NEMO IDE",
-  "short_name": "NEMO",
-  "description": "Seu coordenador pessoal de agentes de IA com escritório 2D",
-  "theme_color": "#0b6e4f",
+  "name": "SYNOP",
+  "short_name": "SYNOP",
+  "description": "Plataforma inteligente de agentes de IA para organização pessoal e profissional",
+  "theme_color": "#0066cc",
   "background_color": "#0f0a14",
   "display": "standalone",
   "orientation": "portrait-primary",
@@ -10,7 +10,7 @@
   "start_url": "/",
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐟</text></svg>",
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
@@ -19,9 +19,9 @@
   "categories": ["productivity", "utilities", "developer-tools"],
   "shortcuts": [
     {
-      "name": "Chat NEMO",
+      "name": "Chat SYNOP",
       "short_name": "Chat",
-      "description": "Conversar com o NEMO",
+      "description": "Conversar com o SYNOP",
       "url": "/?view=chat",
       "icons": [{ "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>", "sizes": "96x96" }]
     },

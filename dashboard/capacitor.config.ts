@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.nemo.ide',
-  appName: 'NEMO IDE',
+  appId: 'com.synop.ide',
+  appName: 'SYNOP',
   webDir: 'dist',
   server: {
     androidScheme: 'https',
@@ -45,7 +45,7 @@ const config: CapacitorConfig = {
     },
     LocalNotifications: {
       smallIcon: 'ic_stat_icon_config_sample',
-      iconColor: '#0b6e4f',
+      iconColor: '#0066cc',
       sound: 'beep.wav',
     },
     PushNotifications: {

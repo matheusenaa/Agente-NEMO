@@ -29,7 +29,7 @@ export const FUNNY_PHRASES: string[] = [
   "Encontrando problemas antes que eles encontrem você.",
   "Rodando testes para evitar aquela famosa surpresa.",
   "Já vi esse filme. Era uma dependência.",
-  "NEMO mergulhou no código.",
+  "SYNOP mergulhou no código.",
   "Descendo mais fundo no problema...",
   "São Januário aprovaria esse código. 😎",
   "Respira, o problema já está mapeado.",
