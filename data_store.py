@@ -23,6 +23,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 from dotenv import load_dotenv
 
@@ -45,6 +46,29 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def self_ms_to_iso(value: Any) -> str:
+    """ms epoch (padrão do app) → timestamptz ISO (padrão do Postgres)."""
+    if isinstance(value, (int, float)) and value and abs(value) < 10 ** 12:
+        return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()
+    if isinstance(value, (int, float)) and value:
+        return datetime.fromtimestamp(float(value) / 1000, tz=timezone.utc).isoformat()
+    if isinstance(value, str) and value:
+        return value
+    return _now_iso()
+
+
+def iso_to_ms(value: Any) -> int:
+    """timestamptz ISO → ms epoch (padrão do app)."""
+    if isinstance(value, str):
+        try:
+            return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
+        except Exception:
+            return _now_ms()
+    if isinstance(value, (int, float)):
+        return int(float(value) * 1000 if abs(value) < 10 ** 12 else value)
+    return _now_ms()
+
+
 # ---------------------------------------------------------------------------
 # Interface
 # ---------------------------------------------------------------------------
@@ -60,6 +84,14 @@ class DataStore:
     def append_message(self, user_id: str, conversation_id: str, role: str, content: str, meta: Optional[Dict[str, Any]] = None) -> None: ...
     def list_messages(self, user_id: str, conversation_id: str) -> List[Dict[str, Any]]: ...
     def delete_conversation(self, user_id: str, conversation_id: str) -> bool: ...
+    def update_conversation(self, user_id: str, conversation_id: str, patch: Dict[str, Any]) -> bool: ...
+    def conversation_belongs_to(self, user_id: str, conversation_id: str) -> bool: ...
+
+    # ---- eventos do calendário (persistidos — antes iam só para JSON local) ----
+    def list_events(self, user_id: str) -> List[Dict[str, Any]]: ...
+    def save_event(self, user_id: str, event: Dict[str, Any]) -> Dict[str, Any]: ...
+    def delete_event(self, user_id: str, event_id: str) -> bool: ...
+    def clear_events(self, user_id: str) -> int: ...
 
     # ---- perfil do usuário ----
     def get_profile(self, user_id: str) -> Dict[str, Any]: ...
@@ -211,11 +243,12 @@ class LocalStore(DataStore):
         events.sort(key=lambda e: (e.get("date", ""), e.get("time", "")))
         return events
 
-    def save_event(self, event: Dict[str, Any]) -> None:
+    def save_event(self, user_id: str, event: Dict[str, Any]) -> Dict[str, Any]:
         events = _read_json(self._f(user_id, "events.json"), [])
         events = [e for e in events if e.get("id") != event.get("id")]
-        events.insert(0, event)
+        events.append(event)
         _write_json(self._f(user_id, "events.json"), events[:500])
+        return event
 
     def delete_event(self, user_id: str, event_id: str) -> bool:
         events = _read_json(self._f(user_id, "events.json"), [])
@@ -224,6 +257,12 @@ class LocalStore(DataStore):
             return False
         _write_json(self._f(user_id, "events.json"), remaining)
         return True
+
+    def clear_events(self, user_id: str) -> int:
+        events = _read_json(self._f(user_id, "events.json"), [])
+        n = len(events)
+        _write_json(self._f(user_id, "events.json"), [])
+        return n
 
     # ---- perfil do usuário ----
     def get_profile(self, user_id: str) -> Dict[str, Any]:
@@ -391,11 +430,16 @@ class LocalStore(DataStore):
                         conv = self.create_conversation(user_id, data.get("agent_id", "nemo"), data.get("title", "Nova conversa"))
                         results.append({"client_id": client_id, "status": "ok", "server_id": conv.get("id")})
                     elif operation == "update":
-                        self.update_conversation(data["id"], data)
+                        self.update_conversation(user_id, data["id"], data)
                         results.append({"client_id": client_id, "status": "ok", "server_id": data["id"]})
                     elif operation == "delete":
                         self.delete_conversation(user_id, data["id"])
                         results.append({"client_id": client_id, "status": "ok", "server_id": data["id"]})
+                elif store == "messages":
+                    if operation == "create":
+                        self.append_message(user_id, data.get("conversation_id", ""), data.get("role", "user"),
+                                            data.get("content", ""), data.get("meta"))
+                        results.append({"client_id": client_id, "status": "ok", "server_id": "created"})
                 elif store == "memories":
                     if operation == "create":
                         mem = self.save_memory(user_id, data.get("agent_id", "nemo"), data.get("content", ""), data.get("kind", "obs"))
@@ -412,8 +456,8 @@ class LocalStore(DataStore):
                         results.append({"client_id": client_id, "status": "ok", "server_id": data["id"]})
                 elif store == "events":
                     if operation in ("create", "update"):
-                        self.save_event(data)
-                        results.append({"client_id": client_id, "status": "ok", "server_id": data.get("id")})
+                        ev = self.save_event(user_id, data)
+                        results.append({"client_id": client_id, "status": "ok", "server_id": ev.get("id")})
                     elif operation == "delete":
                         self.delete_event(user_id, data["id"])
                         results.append({"client_id": client_id, "status": "ok", "server_id": data["id"]})
@@ -538,6 +582,74 @@ class SupabaseStore(DataStore):
         self._t("messages").delete().eq("conversation_id", conversation_id).execute()
         self._t("conversations").delete().eq("id", conversation_id).eq("user_id", user_id).execute()
         return True
+
+    def conversation_belongs_to(self, user_id: str, conversation_id: str) -> bool:
+        """Confirma a posse da conversa — barreira anti-IDOR antes de anexar mensagens."""
+        if not conversation_id:
+            return False
+        owned = self._t("conversations").select("id").eq("id", conversation_id).eq("user_id", user_id).execute().data
+        return bool(owned)
+
+    def update_conversation(self, user_id: str, conversation_id: str, patch: Dict[str, Any]) -> bool:
+        payload = {k: v for k, v in patch.items() if k in ("title", "agent_id")}
+        payload["updated_at"] = _now_iso()
+        data = self._t("conversations").update(payload).eq("id", conversation_id).eq("user_id", user_id).execute().data
+        return bool(data)
+
+    # ---- eventos do calendário ----
+    # A tabela `calendar_events` usa snake_case; o app fala camelCase. A
+    # conversão fica aqui para que NENHUMA rota do servidor precise saber
+    # qual backend está ativo (LocalStore guarda o JSON no mesmo formato).
+    @staticmethod
+    def _event_to_row(user_id: str, event: Dict[str, Any]) -> Dict[str, Any]:
+        created = event.get("createdAt") or event.get("created_at") or _now_ms()
+        return {
+            "id": str(event.get("id") or uuid4().hex),
+            "user_id": user_id,
+            "title": event.get("title") or "Sem título",
+            "description": event.get("description") or "",
+            "event_date": event.get("date") or "",
+            "event_time": event.get("time") or "09:00",
+            "duration_min": int(event.get("durationMin") or event.get("duration_min") or 60),
+            "category": event.get("category") or "outro",
+            "agent_id": event.get("agentId") or event.get("agent_id") or "nemo",
+            "remind_min": int(event.get("remind") or event.get("remind_min") or 0),
+            "created_at": self_ms_to_iso(created),
+        }
+
+    @staticmethod
+    def _row_to_event(row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": row.get("id"),
+            "title": row.get("title", ""),
+            "description": row.get("description", "") or "",
+            "date": row.get("event_date", "") or "",
+            "time": row.get("event_time", "09:00") or "09:00",
+            "durationMin": int(row.get("duration_min") or 60),
+            "category": row.get("category", "outro") or "outro",
+            "agentId": row.get("agent_id", "nemo") or "nemo",
+            "remind": int(row.get("remind_min") or 0),
+            "createdAt": iso_to_ms(row.get("created_at")),
+        }
+
+    def list_events(self, user_id: str) -> List[Dict[str, Any]]:
+        rows = self._t("calendar_events").select("*").eq("user_id", user_id)\
+            .order("event_date").order("event_time").execute().data
+        return [self._row_to_event(r) for r in (rows or [])]
+
+    def save_event(self, user_id: str, event: Dict[str, Any]) -> Dict[str, Any]:
+        row = self._event_to_row(user_id, event)
+        data = self._t("calendar_events").upsert(row, on_conflict="id").execute().data
+        return self._row_to_event(data[0]) if data else self._row_to_event(row)
+
+    def delete_event(self, user_id: str, event_id: str) -> bool:
+        data = self._t("calendar_events").delete().eq("id", event_id).eq("user_id", user_id).execute().data
+        return bool(data)
+
+    def clear_events(self, user_id: str) -> int:
+        rows = self._t("calendar_events").select("id").eq("user_id", user_id).execute().data
+        self._t("calendar_events").delete().eq("user_id", user_id).execute()
+        return len(rows or [])
 
     # ---- perfil do usuário (profiles) ----
     _PROFILE_MAP = {"avatar": "avatar_url", "default_agent": None, "preferences": None}

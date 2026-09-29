@@ -63,14 +63,15 @@ class CompletionResult:
 # Catálogo de modelos por provedor (listas sensatas; o provedor valida na hora)
 # ---------------------------------------------------------------------------
 
+# Conferido contra a API real do Gemini. Os slugs `gemini-2.5-*`, `2.0-*` e
+# `1.5-*` respondem 404 "no longer available to new users": offerê-los na
+# Central de IA só produz erro para o usuário. Os `-latest` são apelidos que o
+# Google mantém apontando para o modelo vigente.
 GEMINI_MODELS: List[str] = [
     "gemini-flash-latest",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
+    "gemini-3.5-flash",
+    "gemini-flash-lite-latest",
     "gemini-pro-latest",
-    "gemini-2.5-pro",
-    "gemini-1.5-pro",
-    "gemini-1.5-flash",
 ]
 
 GROQ_MODELS: List[str] = [
@@ -175,19 +176,31 @@ class GeminiProvider:
         if system_parts:
             payload["systemInstruction"] = {"parts": system_parts}
         started = time.perf_counter()
-        try:
-            resp = requests.post(
-                f"{self.base_url}/models/{model}:generateContent",
-                params={"key": self.api_key},
-                json=payload,
-                timeout=120,
-            )
-            latency = round((time.perf_counter() - started) * 1000, 2)
-        except requests.RequestException as exc:
-            latency = round((time.perf_counter() - started) * 1000, 2)
+        resp = None
+        # 429/503 do Google são transitórios ("high demand", cota do minuto).
+        # Sem retentativa, o usuário recebia erro por um pico de 2 segundos.
+        for attempt in range(_MAX_ATTEMPTS):
+            try:
+                resp = requests.post(
+                    f"{self.base_url}/models/{model}:generateContent",
+                    params={"key": self.api_key},
+                    json=payload,
+                    timeout=120,
+                )
+            except requests.RequestException as exc:
+                latency = round((time.perf_counter() - started) * 1000, 2)
+                return CompletionResult(
+                    success=False, content="", model_used=model, provider="gemini", original_model=model,
+                    latency_ms=latency, error_message=f"Falha de conexão com Gemini: {exc}",
+                )
+            if not _should_retry(resp.status_code, attempt):
+                break
+            time.sleep(RETRY_BACKOFF[min(attempt, len(RETRY_BACKOFF) - 1)])
+        latency = round((time.perf_counter() - started) * 1000, 2)
+        if resp is None:  # só defensivo: o loop sempre define ou retorna
             return CompletionResult(
                 success=False, content="", model_used=model, provider="gemini", original_model=model,
-                latency_ms=latency, error_message=f"Falha de conexão com Gemini: {exc}",
+                latency_ms=latency, error_message="Gemini nao respondeu.",
             )
         if resp.status_code == 200:
             data = resp.json()
@@ -254,15 +267,20 @@ class OpenAICompatibleProvider:
         }
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         started = time.perf_counter()
-        try:
-            resp = requests.post(f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=120)
-            latency = round((time.perf_counter() - started) * 1000, 2)
-        except requests.RequestException as exc:
-            latency = round((time.perf_counter() - started) * 1000, 2)
-            return CompletionResult(
-                success=False, content="", model_used=model, provider=self.provider, original_model=model,
-                latency_ms=latency, error_message=f"Falha de conexão com {self.provider}: {exc}",
-            )
+        resp = None
+        for attempt in range(_MAX_ATTEMPTS):
+            try:
+                resp = requests.post(f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=120)
+            except requests.RequestException as exc:
+                return CompletionResult(
+                    success=False, content="", model_used=model, provider=self.provider, original_model=model,
+                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                    error_message=f"Falha de conexao com {self.provider}: {exc}",
+                )
+            if not _should_retry(resp.status_code, attempt):
+                break
+            time.sleep(RETRY_BACKOFF[min(attempt, len(RETRY_BACKOFF) - 1)])
+        latency = round((time.perf_counter() - started) * 1000, 2)
         if resp.status_code == 200:
             data = resp.json()
             try:
@@ -359,6 +377,25 @@ class OpenRouterProvider:
 # ---------------------------------------------------------------------------
 
 MAX_FALLBACKS = 3  # limite de tentativas — sem fallback infinito (missão §33)
+
+# 500/502/503/504 sao transitorios: pico de demanda ou rede oscilando.
+# Repetir com espera curta custa segundos e evita erro por um problema que
+# passaria sozinho. 429 e caso diferente - quota/minuto nao volta em 2s, so
+# insistir (gastando as 3 tentativas) para atrasar a resposta honesta.
+TRANSIENT_STATUS = {500, 502, 503, 504}
+RATE_LIMIT_STATUS = {429}
+TRANSIENT_RETRIES = 2
+RATE_LIMIT_RETRIES = 1
+RETRY_BACKOFF = (0.8, 2.0)
+_MAX_ATTEMPTS = max(TRANSIENT_RETRIES, RATE_LIMIT_RETRIES) + 1
+
+
+def _should_retry(status_code: int, attempt: int) -> bool:
+    if status_code in TRANSIENT_STATUS:
+        return attempt < TRANSIENT_RETRIES
+    if status_code in RATE_LIMIT_STATUS:
+        return attempt < RATE_LIMIT_RETRIES
+    return False
 
 TEST_PROMPT = "Responda apenas OK com o nome do seu modelo."
 

@@ -4,15 +4,20 @@ Suporta SDK OpenAI v1, cabeçalhos obrigatórios (HTTP-Referer, X-Title),
 verificação de autenticação, resolução dinâmica de slugs e fallbacks automáticos.
 """
 
+import json
+import logging
 import os
 import time
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 from dotenv import load_dotenv
 import requests
 from openai import OpenAI, AsyncOpenAI, APIError, NotFoundError
 
 from models_config import ModelInfo, OPENROUTER_MODELS
+
+LOG = logging.getLogger("synop.openrouter")
+TOOL_CALL_MARKER = "\u0001TOOLCALL\u0001"
 
 # Carrega variáveis de ambiente do .env
 load_dotenv()
@@ -33,6 +38,7 @@ class CompletionResult:
     total_tokens: int = 0
     error_message: Optional[str] = None
     finish_reason: Optional[str] = None
+    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
 
 class OpenRouterClient:
     """Cliente modular para a API OpenRouter."""
@@ -312,7 +318,7 @@ class OpenRouterClient:
             {"role": "user", "content": prompt}
         ]
 
-        # Inicia teste pelo primário se ele for ativo, ou pelo resolved_slug
+        # Inicia teste pelo primário se ele está ativo, ou pelo resolved_slug
         start_slug = resolved_slug if was_pre_resolved else model_info.primary_slug
         remaining_fallbacks = [s for s in [model_info.primary_slug] + fallbacks if s != start_slug]
 
@@ -328,3 +334,178 @@ class OpenRouterClient:
             res.is_fallback = True
 
         return res
+
+    # ------------------------------------------------------------------
+    # Tool calling (fluxo: LLM pede a ferramenta -> backend executa ->
+    # resultado volta ao LLM -> resposta final)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _serialize_tool_calls(raw: Any) -> List[Dict[str, Any]]:
+        calls: List[Dict[str, Any]] = []
+        for tc in raw or []:
+            fn = getattr(tc, "function", None)
+            args_raw = getattr(fn, "arguments", "") if fn is not None else ""
+            if isinstance(args_raw, str):
+                try:
+                    args = json.loads(args_raw or "{}")
+                except Exception:
+                    args = {"_raw": args_raw}
+            else:
+                args = args_raw or {}
+            calls.append({
+                "id": getattr(tc, "id", "") or f"call_{len(calls)}",
+                "name": (getattr(fn, "name", "") if fn is not None else "") or "",
+                "arguments": args if isinstance(args, dict) else {},
+            })
+        return calls
+
+    def chat_completion_with_tools(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        temperature: float = 0.4,
+        max_tokens: int = 900,
+        fallback_slugs: Optional[List[str]] = None,
+    ) -> CompletionResult:
+        """Uma rodada com ferramentas habilitadas.
+
+        Se o modelo pedir uma ferramenta, devolve `tool_calls` no resultado com
+        `success=True` e `content` vazio — quem chamou executa e faz a segunda
+        rodada. Se o modelo responder direto, `content` vem preenchido.
+        """
+        slugs = [model] + [s for s in (fallback_slugs or []) if s and s not in (None, model)]
+        last_error: Optional[str] = None
+        last_slug = model
+
+        for idx, slug in enumerate(slugs):
+            last_slug = slug
+            try:
+                response = self.client.chat.completions.create(
+                    model=slug,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice="auto",
+                    temperature=max(0.0, min(float(temperature), 2.0)),
+                    max_tokens=max(1, min(int(max_tokens), 4000)),
+                    timeout=self.request_timeout,
+                )
+            except NotFoundError as exc:
+                last_error = f"Modelo não encontrado ({slug}): {exc}"
+                continue
+            except APIError as exc:
+                # 400 costuma ser "este modelo não suporta tools" — nesse caso
+                # devolvemos sem tools em vez de falhar a conversa inteira.
+                if self._error_status(exc) == 400:
+                    LOG.info("openrouter: modelo %s recusou tools (%s) — seguindo sem tool calling", slug, str(exc)[:120])
+                    return self.chat_completion(
+                        model=slug, messages=[{k: v for k, v in m.items() if k in ("role", "content")}
+                                              for m in messages],
+                        temperature=temperature, max_tokens=max_tokens,
+                        fallback_slugs=slugs[idx + 1:],
+                    )
+                if self._is_retryable_error(exc):
+                    last_error = f"Falha transitória ({slug}): {exc}"
+                    continue
+                return CompletionResult(success=False, content="", model_used=slug, original_model=model,
+                                        is_fallback=idx > 0, latency_ms=0.0,
+                                        error_message=f"Erro da API OpenRouter ({type(exc).__name__}): {exc}")
+            except Exception as exc:
+                if self._is_retryable_error(exc):
+                    last_error = f"Falha transitória ({slug}): {exc}"
+                    continue
+                return CompletionResult(success=False, content="", model_used=slug, original_model=model,
+                                        is_fallback=idx > 0, latency_ms=0.0,
+                                        error_message=f"Exceção inesperada ({type(exc).__name__}): {exc}")
+
+            choice = response.choices[0] if response.choices else None
+            usage = response.usage
+            common = dict(
+                model_used=slug, original_model=model, is_fallback=idx > 0,
+                prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                total_tokens=getattr(usage, "total_tokens", 0) or 0,
+                finish_reason=getattr(choice, "finish_reason", None) if choice else None,
+            )
+            calls = self._serialize_tool_calls(getattr(choice.message, "tool_calls", None) if choice else None)
+            if calls:
+                return CompletionResult(success=True, content="", latency_ms=0.0, tool_calls=calls, **common)
+            return CompletionResult(
+                success=True,
+                content=str(choice.message.content or "").strip() if choice else "",
+                latency_ms=0.0, **common,
+            )
+
+        return CompletionResult(success=False, content="", model_used=last_slug, original_model=model,
+                                is_fallback=True, latency_ms=0.0,
+                                error_message=last_error or "Todos os slugs com tools falharam.")
+
+    # ------------------------------------------------------------------
+    # Streaming (tokens progressivos — a tela não congela)
+    # ------------------------------------------------------------------
+
+    def stream_chat(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        temperature: float = 0.7,
+        max_tokens: int = 900,
+        fallback_slugs: Optional[List[str]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> Iterator[str]:
+        """Gera o texto token a token. Levanta exceção em falha (o chamador
+        decide se tenta o próximo slug)."""
+        kwargs: Dict[str, Any] = {}
+        if tools:
+            kwargs = {"tools": tools, "tool_choice": "auto"}
+        stream = self.client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=max(0.0, min(float(temperature), 2.0)),
+            max_tokens=max(1, min(int(max_tokens), 4000)),
+            stream=True,
+            timeout=self.request_timeout,
+            **kwargs,
+        )
+        # Em streaming, `delta.tool_calls` chega FRAGMENTADO (um pedaço de id,
+        # de nome e de arguments por chunk). Emitir um marcador por delta geraria
+        # N chamadas quebradas com JSON inválido — então acumulamos por índice
+        # e emitimos UMA chamada completa quando o stream termina.
+        pending: Dict[int, Dict[str, Any]] = {}
+
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            text = getattr(delta, "content", None)
+            if text:
+                yield text
+            for tc in (getattr(delta, "tool_calls", None) or []):
+                idx = getattr(tc, "index", None)
+                if idx is None:
+                    idx = len(pending)
+                slot = pending.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                if getattr(tc, "id", None):
+                    slot["id"] = tc.id
+                fn = getattr(tc, "function", None)
+                if fn is not None:
+                    if getattr(fn, "name", None):
+                        slot["name"] = (slot["name"] or "") + fn.name
+                    if getattr(fn, "arguments", None):
+                        slot["arguments"] = (slot["arguments"] or "") + fn.arguments
+
+        if pending:
+            calls: List[Dict[str, Any]] = []
+            for i, (_idx, slot) in enumerate(sorted(pending.items(), key=lambda kv: kv[0])):
+                raw_args = slot.get("arguments") or "{}"
+                try:
+                    parsed = json.loads(raw_args)
+                except Exception:
+                    parsed = {"_raw": raw_args}
+                calls.append({
+                    "id": slot.get("id") or f"call_{i}",
+                    "name": slot.get("name") or "",
+                    "arguments": parsed if isinstance(parsed, dict) else {},
+                })
+            yield TOOL_CALL_MARKER + json.dumps(calls, ensure_ascii=False)

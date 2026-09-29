@@ -13,6 +13,10 @@ export function MessageBubble({ message, showTimestamps }: Props) {
   const isUser = message.role === "user";
   const isDone = message.status === "done";
   const isError = message.status === "error";
+  // `streaming` = o texto já está chegando token a token pelo SSE. Antes o
+  // conteúdo só aparecia com status "done", o que tornava o streaming
+  // invisível: a tela ficava parada até o fim.
+  const isStreaming = message.status === "streaming";
   const meta = message.meta;
 
   return (
@@ -31,6 +35,7 @@ export function MessageBubble({ message, showTimestamps }: Props) {
               {new Date(message.time).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
             </span>
           )}
+          {isStreaming && <span className="when">✍️ escrevendo…</span>}
         </div>
 
         <div className={`bubble ${isError ? "error" : ""}`} style={isError ? { borderColor: "var(--danger)" } : undefined}>
@@ -44,7 +49,12 @@ export function MessageBubble({ message, showTimestamps }: Props) {
               </div>
             </>
           )}
-          {isDone && !!message.content && <div>{renderMarkdown(message.content)}</div>}
+          {(isDone || isStreaming) && !!message.content && (
+            <div>
+              {renderMarkdown(message.content)}
+              {isStreaming && <span className="stream-caret" aria-hidden="true" />}
+            </div>
+          )}
           {isError && !message.content && <div style={{ color: "var(--danger)" }}>{message.error ?? "Erro ao gerar resposta."}</div>}
         </div>
 
@@ -54,6 +64,9 @@ export function MessageBubble({ message, showTimestamps }: Props) {
             {meta.latencyMs != null && <span>⏱ {meta.latencyMs}ms</span>}
             {meta.promptTokens != null && <span>📝 {meta.promptTokens} tok</span>}
             {meta.isFallback && <span style={{ color: "var(--warn)" }}>⚠️ usou modelo reserva</span>}
+            {meta.usedSearch && (
+              <span title="Esta resposta consultou a web">🌐 buscou na web{meta.searchProvider ? ` (${meta.searchProvider})` : ""}</span>
+            )}
           </div>
         )}
       </div>

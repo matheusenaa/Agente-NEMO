@@ -49,6 +49,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
@@ -58,9 +59,11 @@ import sys
 import threading
 import time
 import unicodedata
+import uuid as uuid_lib
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
+from uuid import uuid4
 
 # Garante que a raiz do projeto esteja no sys.path independente do ambiente
 def _get_project_root() -> Path:
@@ -92,10 +95,10 @@ if str(ROOT) not in sys.path:
 
 from fastapi import Body, FastAPI, Form, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from openrouter_client import OpenRouterClient
+from openrouter_client import TOOL_CALL_MARKER, CompletionResult, OpenRouterClient
 from models_config import OPENROUTER_MODELS, get_model_by_id, get_all_models
 from auth import AuthError, AuthStore, make_auth_store
 from ai_providers import AIProviderService, PROVIDER_META, GEMINI_MODELS, GROQ_MODELS, OPENAI_MODELS
@@ -109,6 +112,53 @@ from data_store import make_data_store
 
 VERSION = "1.0.0"
 PROJECT_NAME = "NEMO IDE"
+
+# ---------------------------------------------------------------------------
+# Logs (missão §31/§32). Um logger de verdade no lugar dos `except: pass` que
+# escondiam falhas de persistência. NUNCA registra senha, token ou API key:
+# `_redact` garante isso mesmo se alguém passar um valor sensível por engano.
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=os.getenv("NEMO_LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)-5s [%(name)s] %(message)s",
+)
+LOG = logging.getLogger("synop")
+
+_SECRET_KEYS = ("password", "senha", "token", "api_key", "apikey", "secret", "authorization", "encrypted")
+
+
+def _redact(value: Any) -> Any:
+    """Remove credenciais de qualquer payload antes de logar."""
+    if isinstance(value, dict):
+        return {k: ("***" if any(s in str(k).lower() for s in _SECRET_KEYS) else _redact(v))
+                for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redact(v) for v in value]
+    text = str(value)
+    if len(text) > 2000:
+        return text[:2000] + "…"
+    return text
+
+
+def warn(context: str, exc: BaseException, **extra: Any) -> None:
+    """Substitui os `except Exception: pass`: o erro SAI no log do servidor."""
+    LOG.warning("%s | %s: %s | %s", context, type(exc).__name__, _redact(str(exc)),
+                _redact(extra) if extra else "")
+
+
+def _internal_error(context: str, exc: BaseException, status_code: int = 500) -> HTTPException:
+    """Erro 500 sem vazar internals (SQL, nomes de tabela, dica do Postgres).
+
+    `detail=str(exc)` expunha ao cliente o erro cru do Supabase, por exemplo
+    `{'message': 'invalid input syntax for type uuid: "None"', 'code': '22P02',
+    'hint': None, ...}`. O detalhe vai para o log do servidor; o cliente recebe
+    uma mensagem genérica."""
+    warn(context, exc)
+    return HTTPException(
+        status_code=status_code,
+        detail="Não foi possível concluir a operação agora. Tente novamente.",
+    )
+
 
 AGENTS_DIR = ROOT / "agents"
 SQUADS_DIR = ROOT / "squads"
@@ -239,8 +289,26 @@ SEARCH_QUERY_ROOTS = re.compile(
 )
 
 
+def _safe_json(value: Any, default: str = "{}") -> str:
+    """`json.dumps` que nunca explode.
+
+    Os argumentos de uma tool call vêm do modelo e de mocks nos testes; um
+    valor não serializável não pode derrubar a conversa inteira (500 no chat).
+    """
+    try:
+        return json.dumps(value if value is not None else {}, ensure_ascii=False, default=str)
+    except Exception:
+        return default
+
+
 def _needs_search(message: str, tools: List[str]) -> bool:
-    """Missão §21: o agente decide quando buscar na web (e só com permissão)."""
+    """Heurística barata: a pergunta pede informação externa/recente?
+
+    Só é a PRIMEIRA triagem. Quando ela diz "não", ainda assim o modelo pode
+    pedir a ferramenta `web_search` durante a conversa (tool calling real) —
+    este filtro evita só o desperdício de sempre_search em perguntas de
+    conhecimento estável ("qual a capital do Brasil?").
+    """
     if not (message or "").strip() or len(message.strip()) < 12:
         return False
     if "web_search" not in tools and "search" not in tools:
@@ -251,19 +319,62 @@ def _needs_search(message: str, tools: List[str]) -> bool:
     return any(hint in msg for hint in SEARCH_HINTS)
 
 
+# Ferramenta real de tool calling (§10). O modelo decide quando usá-la; o
+# backend executa; o resultado volta para o modelo.
+WEB_SEARCH_TOOL: Dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "web_search",
+        "description": (
+            "Pesquise informações ATUAIS na internet (notícias, preços, resultados, "
+            "datas, pessoas, eventos). Use SEMPRE que a resposta depender de algo "
+            "recente ou de um fato que você não tem certeza. NÃO use para perguntas "
+            "de conhecimento estável (ex.: capital de um país, fórmula, definição)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Termo de busca em português, específico e curto.",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+
 def _search_block(sres: Dict[str, Any]) -> str:
+    """Contexto de busca para o prompt, com as fontes reais.
+
+    Quando a busca falha, o bloco DIZ que falhou — o modelo é instruído a
+    informar isso ao usuário em vez de preencher a lacuna com suposição (§9).
+    """
+    if not sres.get("ok"):
+        return (
+            "AVISO — A BUSCA NA WEB FALHOU NESTA TENTATIVA.\n"
+            f"Motivo informado pelo sistema: {sres.get('error') or 'mecanismo indisponível'}.\n"
+            "Responda a partir do seu conhecimento, deixe isso CLARO ao usuário "
+            "('não consegui confirmar na web agora') e NUNCA invente fatos, "
+            "datas, números ou URLs."
+        )
     results = sres.get("results", [])
     lines = [
-        "INFORMAÇÕES ENCONTRADAS NA WEB (referência; cite as fontes):",
+        "INFORMAÇÕES ENCONTRADAS NA WEB AGORA (use e cite as fontes abaixo):",
         f"Mecanismo: {sres.get('provider', '')}",
     ]
     for i, r in enumerate(results[:6], 1):
+        url = r.get("url") or "(fonte sem URL)"
         lines.append(
-            f"{i}. {r.get('title', '') or '(sem título)'}\n   URL: {r.get('url', '')}\n   {r.get('snippet', '')[:320]}"
+            f"\n{i}. {r.get('title') or '(sem título)'}\n"
+            f"   FONTE: {url}\n"
+            f"   TRECHO: {(r.get('snippet') or '')[:600]}"
         )
     lines.append(
-        "Separe claramente seu CONHECIMENTO DO MODELO das informações acima. "
-        "Não invente fontes nem URLs que não apareceram aqui."
+        "\nREGRAS: separe o que vem da web do que é conhecimento seu; "
+        "cite a fonte ao lado de cada informação; "
+        "NÃO invente fontes, URLs ou números que não estejam acima."
     )
     return "\n".join(lines)
 
@@ -272,7 +383,8 @@ def _memory_block(user_id: str, agent_id: str) -> str:
     """Memória permanente do agente para este usuário (missão §24/25)."""
     try:
         mems = DATA_STORE.list_memories(user_id, agent_id) or []
-    except Exception:
+    except Exception as exc:
+        warn("chat: leitura de memorias", exc, user=user_id, agent=agent_id)
         return ""
     if not mems:
         return ""
@@ -395,7 +507,7 @@ def _agent_persona(agent_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _build_system_prompt(agent: Dict[str, Any], extra_context: str = "") -> str:
+def _build_system_prompt(agent: Dict[str, Any], extra_context: str = "", can_search: bool = False) -> str:
     name = agent.get("name", "Agente")
     title = agent.get("title", "")
     role = agent.get("role", "")
@@ -415,13 +527,28 @@ def _build_system_prompt(agent: Dict[str, Any], extra_context: str = "") -> str:
         f"Você é {name}, {title}. Aja com profissionalismo, objetividade e precisão."
     )
     extra = f"\n\nCONTEXTO ADICIONAL:\n{extra_context}" if extra_context else ""
+    search_line = (
+        "- Você PODE e DEVE usar a ferramenta `web_search` quando a resposta depender "
+        "de informação atual, recente ou verificável na internet. Depois de pesquisar, "
+        "cite as fontes.\n"
+        "- Se a busca falhar, diga claramente ao usuário que não conseguiu consultar a web "
+        "nesta tentativa. NUNCA preencha a lacuna com suposição apresentada como fato.\n"
+        if can_search else
+        "- Você NÃO tem acesso à internet nesta resposta. Se a pergunta exigir informação "
+        "atual ou verificável, diga isso claramente ao usuário em vez de inventar.\n"
+    )
     return (
         f"Você é {name} ({title}) — um agente de IA da equipe NEMO IDE.\n\n"
         f"PERSONA:\n{persona_text}{extra}\n\n"
         "DIRETRIZES:\n"
         "- Responda em português do Brasil.\n"
+        "- **Responda EXATAMENTE o que foi perguntado.** Se a pergunta é factual e direta, "
+        "seja direto. Se for sobre a sua área, use todo o seu conhecimento specialised. "
+        "Nunca responda com uma frase genérica sobre si mesmo quando a pergunta é sobre "
+        "outro assunto.\n"
         "- Seja direto e objetivo; profundidade proporcional à complexidade.\n"
         "- Nunca invente fatos, dados ou números; se não souber, diga que não sabe.\n"
+        f"{search_line}"
         "- Estruture respostas longas com seções claras.\n"
         "- Preserve trabalho existente e nunca exponha credenciais ou dados sensíveis.\n"
     )
@@ -532,8 +659,46 @@ def _run_command(command: str, force: bool = False, timeout: int = 60) -> Dict[s
 
 
 def _events_file_for(user_id: str) -> Path:
-    """Arquivo de eventos da área privada do usuário (isolamento por usuário)."""
+    """Arquivo legado de eventos (JSON local). Só é lido para MIGRAR eventos
+    antigos para o banco — a partir daí o calendário vive no DataStore."""
     return AUTH_STORE.events_file(user_id)
+
+
+def _legacy_events_for(user_id: str) -> List[Dict[str, Any]]:
+    return _load_events(_events_file_for(user_id))
+
+
+def _migrate_legacy_events(user_id: str) -> int:
+    """Importa eventos que ficaram só no JSON local para o banco de dados.
+
+    Sem isso, quem criou eventos antes desta correção perderia o calendário ao
+    trocar o backend. Roda uma vez por usuário: o arquivo é arquivado depois.
+    """
+    if DATA_STORE.name == "local":
+        return 0
+    try:
+        legacy = _legacy_events_for(user_id)
+    except Exception as exc:
+        warn("calendario: leitura do legado", exc, user=user_id)
+        return 0
+    if not legacy:
+        return 0
+    migrated = 0
+    for ev in legacy:
+        try:
+            if not ev.get("id"):
+                ev["id"] = _gen_event_id()
+            if DATA_STORE.save_event(user_id, ev):
+                migrated += 1
+        except Exception as exc:
+            warn("calendario: migracao de evento legado", exc, user=user_id, event=ev.get("id"))
+    if migrated:
+        try:
+            _events_file_for(user_id).replace(_events_file_for(user_id).with_suffix(".migrated.json"))
+            LOG.info("calendario: %d evento(s) legado(s) migrado(s) para %s", migrated, DATA_STORE.name)
+        except Exception as exc:
+            warn("calendario: arquivamento do legado", exc, user=user_id)
+    return migrated
 
 
 def _load_events(file: Optional[Path] = None) -> List[Dict[str, Any]]:
@@ -734,6 +899,21 @@ class ChatRequest(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=900, ge=1, le=4000)
     context: str = Field(default="", max_length=12000)
+    # `conversation_id` chega como null de clientes que ainda não têm thread
+    # (o frontend envia `""`, mas APIs externas mandam null). Antes, null
+    # derrubava a requisição inteira com 422 antes mesmo de gerar a resposta.
+    conversation_id: Optional[str] = Field(default="", max_length=100)
+    # Provedor desejado ("gemini", "groq", "openai", "openrouter"). Vazio = usa
+    # a escolha da Central de IA. Antes esse campo não existia e o chat era
+    # sempre OpenRouter, ignorando a configuração do usuário.
+    provider: str = Field(default="", max_length=40)
+    # O cliente marca aqui que esta é a PRIMEIRA mensagem de uma nova thread.
+    # Sem isso, o servidor cairia no "convs[0]" e todas as conversas voltariam a
+    # se misturar num histórico só.
+    new_conversation: bool = False
+    # "auto" (padrão) = o servidor decide se precisa buscar; "on"/"off" = força.
+    web_search: str = Field(default="auto", max_length=8)
+
 
 
 class FileSaveRequest(BaseModel):
@@ -1230,18 +1410,29 @@ def agents(request: Request) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Calendário — eventos persistidos (JSON em _data/events.json)
+# Calendário — eventos persistidos no DataStore (Supabase em produção)
 # ---------------------------------------------------------------------------
 
 def _gen_event_id() -> str:
-    from uuid import uuid4
-    return uuid4().hex[:9]
+    """UUID completo.
+
+    Antes era `uuid4().hex[:9]`: o JSON local aceitava, mas a coluna
+    `calendar_events.id` é do tipo `uuid` no Postgres e rejeitava com
+    `22P02 invalid input syntax for type uuid`, o que fazia TODO evento
+    falhar com 503.
+    """
+    return str(uuid4())
 
 
 @app.get("/api/nemo/events")
 def list_events(request: Request) -> List[Dict[str, Any]]:
     user = _require_user(request)
-    events = _load_events(_events_file_for(user["id"]))
+    _migrate_legacy_events(user["id"])
+    try:
+        events = DATA_STORE.list_events(user["id"]) or []
+    except Exception as exc:
+        warn("calendario: listagem", exc, user=user["id"], backend=DATA_STORE.name)
+        events = _legacy_events_for(user["id"])
     events.sort(key=lambda e: (e.get("date", ""), e.get("time", "")))
     return events
 
@@ -1262,38 +1453,462 @@ def create_event(req: EventRequest, request: Request) -> Dict[str, Any]:
         "remind": int(req.remind or 0),
         "createdAt": req.createdAt or now,
     })
-    file = _events_file_for(user["id"])
-    events = _load_events(file)
-    events = [e for e in events if e.get("id") != event["id"]]
-    events.append(event)
-    _save_events(events, file)
-    return event
+    if not event.get("date"):
+        raise HTTPException(status_code=400, detail="Informe a data do evento.")
+    _migrate_legacy_events(user["id"])
+    try:
+        saved = DATA_STORE.save_event(user["id"], event)
+    except Exception as exc:
+        warn("calendario: criacao", exc, user=user["id"], backend=DATA_STORE.name)
+        raise HTTPException(status_code=503, detail="Não foi possível salvar o evento agora. Tente novamente.")
+    return saved or event
 
 
 @app.put("/api/nemo/events/{event_id}")
 def update_event(event_id: str, req: EventRequest, request: Request) -> Dict[str, Any]:
     user = _require_user(request)
-    file = _events_file_for(user["id"])
-    events = _load_events(file)
-    for i, e in enumerate(events):
-        if e.get("id") == event_id:
-            merged = {**e, **{k: v for k, v in req.model_dump(exclude_unset=True).items() if v is not None and v != ""}}
-            events[i] = _normalize_event(merged)
-            _save_events(events, file)
-            return events[i]
-    raise HTTPException(status_code=404, detail="Evento não encontrado.")
+    _migrate_legacy_events(user["id"])
+    try:
+        current = next((e for e in (DATA_STORE.list_events(user["id"]) or []) if e.get("id") == event_id), None)
+    except Exception as exc:
+        warn("calendario: leitura para atualizacao", exc, user=user["id"])
+        current = next((e for e in _legacy_events_for(user["id"]) if e.get("id") == event_id), None)
+    if not current:
+        raise HTTPException(status_code=404, detail="Evento não encontrado.")
+    merged = {**current, **{k: v for k, v in req.model_dump(exclude_unset=True).items() if v is not None and v != ""}}
+    merged["id"] = event_id
+    try:
+        return DATA_STORE.save_event(user["id"], _normalize_event(merged)) or merged
+    except Exception as exc:
+        warn("calendario: atualizacao", exc, user=user["id"])
+        raise HTTPException(status_code=503, detail="Não foi possível atualizar o evento agora.")
 
 
 @app.delete("/api/nemo/events/{event_id}")
 def delete_event(event_id: str, request: Request) -> Dict[str, Any]:
     user = _require_user(request)
-    file = _events_file_for(user["id"])
-    events = _load_events(file)
-    remaining = [e for e in events if e.get("id") != event_id]
-    if len(remaining) == len(events):
+    _migrate_legacy_events(user["id"])
+    try:
+        ok = DATA_STORE.delete_event(user["id"], event_id)
+    except Exception as exc:
+        warn("calendario: exclusao", exc, user=user["id"])
+        raise HTTPException(status_code=503, detail="Não foi possível excluir o evento agora.")
+    if not ok:
         raise HTTPException(status_code=404, detail="Evento não encontrado.")
-    _save_events(remaining, file)
     return {"ok": True, "deleted": event_id}
+
+
+def _user_ai_settings(user_id: str) -> Dict[str, Any]:
+    """Configuração de IA do usuário (provedor/modelo escolhidos na Central de IA).
+    Nunca levanta: ausente ou quebrado é o mesmo que "não configurou"."""
+    try:
+        return DATA_STORE.get_ai_settings(user_id) or {}
+    except Exception as exc:
+        warn("ia: leitura das preferencias", exc, user=user_id)
+        return {}
+
+
+def _provider_is_usable(provider: str, user_id: str) -> bool:
+    """Provedor só vale se tiver chave: do ambiente ou do cofre do usuário."""
+    if provider not in PROVIDER_META:
+        return False
+    if AI_SERVICE.has_system_key(provider):
+        return True
+    try:
+        return bool(DATA_STORE.get_api_key(user_id, provider))
+    except Exception as exc:
+        warn("ia: leitura do cofre de chaves", exc, user=user_id)
+        return False
+
+
+def _agent_override(user_id: str, agent_id: str) -> Dict[str, Any]:
+    """Override de IA salvo para um agente na Central de IA (provider/modelo).
+
+    A Central de IA grava `agent_overrides` desde o começo, mas o chat nunca
+    lia esse campo: o usuário configurava "este agente usa o Groq" e o SYNOP
+    ignorava a configuração."""
+    if not user_id or not agent_id:
+        return {}
+    ov = (_user_ai_settings(user_id).get("agent_overrides") or {}).get(agent_id) or {}
+    return ov if isinstance(ov, dict) else {}
+
+
+def _resolve_provider(req: ChatRequest, user_id: str) -> str:
+    """Provedor efetivo do chat, do mais específico ao mais geral.
+
+    Ordem: request explícito > override do agente > default do usuário >
+    `NEMO_AI_PROVIDER` do servidor > openrouter.
+
+    Regressão estrutural: o chat usava `get_client()` (OpenRouter) direto e
+    ignorava a Central de IA. Com a conta do OpenRouter sem crédito, o SYNOP
+    ficava 100% offline mesmo tendo `GEMINI_API_KEY` funcionando — a escolha de
+    provedor salva pelo usuário não valia nada."""
+    agent_id = str(getattr(req, "agent", "") or "")
+    candidates = [
+        str(getattr(req, "provider", "") or ""),
+        str(_agent_override(user_id, agent_id).get("provider") or ""),
+        str(_user_ai_settings(user_id).get("default_provider") or ""),
+        str(AI_SERVICE.default_provider() or ""),
+    ]
+    for raw in candidates:
+        candidate = raw.strip().lower()
+        if candidate and candidate in PROVIDER_META and _provider_is_usable(candidate, user_id):
+            return candidate
+    return "openrouter"
+
+
+def _provider_model(user_id: str, provider: str, agent_model: str, agent_id: str = "") -> tuple:
+    """Traduz o modelo do agente para o vocabulário do provedor escolhido.
+
+    `deepseek/deepseek-chat` não existe no Gemini; usar o slug cru lá devolve
+    404 e o usuário vê um erro de modelo em vez de resposta."""
+    if provider == "openrouter":
+        mi = get_model_by_id(agent_model)
+        return agent_model, list(mi.fallback_slugs or []) if mi else []
+    models = list(PROVIDER_META.get(provider, {}).get("models") or [])
+    settings = _user_ai_settings(user_id)
+    # Específico antes do genérico: request/agente, override do agente,
+    # default do usuário, primeiro modelo do provedor.
+    for candidate in (
+        agent_model,
+        str(_agent_override(user_id, agent_id).get("model") or ""),
+        str(settings.get("default_model") or ""),
+    ):
+        if candidate and candidate in models:
+            return candidate, []
+    if models:
+        return models[0], []
+    return AI_SERVICE.default_provider_model(), []
+
+
+def _generate_sync(provider: str, model: str, messages: List[Dict[str, str]],
+                   temperature: float, max_tokens: int,
+                   fallback_slugs: Optional[List[str]] = None) -> CompletionResult:
+    """Gera a resposta pelo provedor efetivo. OpenRouter tem o caminho rico
+    (tools/fallback); os demais usam o `AIProviderService`."""
+    if provider == "openrouter":
+        return get_client().chat_completion(
+            model=model, messages=messages, temperature=temperature,
+            max_tokens=max_tokens, fallback_slugs=fallback_slugs,
+        )
+    return AI_SERVICE.complete(
+        provider, model, messages, temperature=temperature, max_tokens=max_tokens,
+    )
+
+
+def _resolve_agent_and_model(req: ChatRequest, user_id: str = "") -> Dict[str, Any]:
+    """Resolve persona + provedor + modelo. Separate para o endpoint síncrono e o de
+    streaming compartilharem exatamente a mesma decisão."""
+    agent = _agent_persona(req.agent) or {
+        "id": req.agent, "name": "Nemo", "title": "Assistente", "category": "assistant",
+        "role": "Assistente pessoal.", "defaultModel": CATEGORY_MODEL_DEFAULT,
+    }
+    provider = _resolve_provider(req, user_id) if user_id else "openrouter"
+    agent_model = req.model or agent.get("defaultModel") or CATEGORY_MODEL_DEFAULT
+    model, fallback_slugs = _provider_model(user_id, provider, agent_model, str(req.agent or ""))
+    if provider == "openrouter":
+        if get_model_by_id(model) is None:
+            raise HTTPException(status_code=400, detail="Modelo não configurado para o NEMO.")
+    return {"agent": agent, "model": model, "provider": provider,
+            "fallback_slugs": list(fallback_slugs or [])}
+
+
+def _load_history(user_id: str, conversation_id: Optional[str], limit: int = 12) -> List[Dict[str, str]]:
+    """Histórico da thread vindo do BANCO, não do cliente.
+
+    Regressão grave de memória: as mensagens eram gravadas (o histórico aparecia
+    na tela) mas nunca voltavam para o prompt. Bastava recarregar a página, logar
+    de novo ou abrir em outro dispositivo para o agente "esquecer" tudo — a
+    memória do SYNOP era só de fachada."""
+    if not conversation_id:
+        return []
+    try:
+        stored = DATA_STORE.list_messages(user_id, conversation_id) or []
+    except Exception as exc:
+        warn("memoria: leitura do historico", exc, user=user_id, conversation=conversation_id)
+        return []
+    out: List[Dict[str, str]] = []
+    for m in stored[-limit:]:
+        role = str(m.get("role") or "")
+        content = str(m.get("content") or "").strip()
+        if role in ("user", "assistant") and content:
+            out.append({"role": role, "content": content[:8000]})
+    return out
+
+
+def _build_messages(req: ChatRequest, system: str,
+                    history: Optional[List[Dict[str, str]]] = None) -> List[Dict[str, str]]:
+    """Monta as mensagens do modelo.
+
+    A memória vem do servidor (argumento `history`). O `req.messages` do cliente
+    só entra quando o banco não tem nada — assim não duplicamos o mesmo turno
+    quando o frontend também manda o histórico, e ainda respeitamos clientes
+    externos que cuidam do contexto sozinhos."""
+    messages: List[Dict[str, str]] = [{"role": "system", "content": system}]
+    if history:
+        messages.extend(history)
+    else:
+        for m in req.messages[-12:]:
+            if m.role in ("user", "assistant") and m.content:
+                messages.append({"role": m.role, "content": m.content[:12000]})
+    if req.message:
+        messages.append({"role": "user", "content": req.message[:12000]})
+    if len(messages) == 1:
+        messages.append({"role": "user", "content": "Olá."})
+    return messages
+
+
+def _run_web_search(user_id: str, agent_id: str, query: str) -> Dict[str, Any]:
+    """Executa a busca e registra. Nunca levanta: devolve o dicionário com
+    `ok: False` para que o prompt diga ao usuário que a busca falhou."""
+    try:
+        res = WEB_SEARCH_SERVICE.search(user_id, query, 6)
+    except WebSearchError as exc:
+        LOG.info("busca indisponivel | user=%s | %s", user_id, exc.message)
+        return {"ok": False, "query": query, "results": [], "error": exc.message}
+    except Exception as exc:
+        warn("busca: falha inesperada", exc, user=user_id, query=query[:80])
+        return {"ok": False, "query": query, "results": [], "error": "Falha inesperada na busca."}
+    if res.get("ok"):
+        try:
+            DATA_STORE.save_search(user_id, agent_id, query, res.get("provider", ""), res.get("results", []))
+        except Exception as exc:
+            warn("busca: persistencia", exc, user=user_id)
+        _log_activity(user_id, agent_id, "web_search", "ok", res.get("provider", ""))
+        LOG.info("busca ok | user=%s agent=%s provedor=%s resultados=%d",
+                 user_id, agent_id, res.get("provider"), len(res.get("results") or []))
+    else:
+        LOG.info("busca sem resultado | user=%s provedor=%s", user_id, res.get("provider", "none"))
+    return res
+
+
+def _tools_for_agent(agent_id: str) -> List[Dict[str, Any]]:
+    """Ferramentas expostas ao modelo — somente as permitidas ao agente."""
+    allowed = AGENT_TOOLS.get(agent_id or "", [])
+    if "web_search" in allowed or "search" in allowed:
+        return [WEB_SEARCH_TOOL]
+    return []
+
+
+def _prepare_chat(req: ChatRequest, user: Dict[str, Any], resolved: Dict[str, Any],
+                  on_event: Optional[Any] = None) -> Dict[str, Any]:
+    """FASE 1 (comum ao chat normal e ao streaming): persona, contexto,
+    eventual busca na web e montagem das mensagens.
+
+    Separar esta fase é o que permite que o SSE execute a MESMA busca e
+    depois emita os tokens — sem duplicar lógica nem divergir de comportamento.
+    """
+    emit = on_event or (lambda *_a, **_k: None)
+    agent = resolved["agent"]
+    model = resolved["model"]
+    tools = _tools_for_agent(agent["id"])
+    can_search = bool(tools)
+
+    ctx_parts: List[str] = []
+    mem = _memory_block(user["id"], agent["id"])
+    if mem:
+        ctx_parts.append(mem)
+    if req.context:
+        ctx_parts.append(f"CONTEXTO DO USUÁRIO:\n{req.context[:4000]}")
+
+    used_search = False
+    search_report: Dict[str, Any] = {}
+    tool_message: Optional[str] = None
+
+    # --- Etapa 1: triagem por heurística (evita custo em pergunta estável) ---
+    if can_search and _needs_search(req.message, AGENT_TOOLS.get(agent["id"], [])):
+        emit("status", {"stage": "searching", "message": "Consultando a web..."})
+        search_report = _run_web_search(user["id"], agent["id"], req.message[:200])
+        used_search = True
+        ctx_parts.append(_search_block(search_report))
+        _log_activity(user["id"], agent["id"], "web_search_auto",
+                      "ok" if search_report.get("ok") else "unavailable", search_report.get("provider", ""))
+
+    system = _build_system_prompt(agent, "\n\n".join(ctx_parts), can_search=can_search)
+    messages = _build_messages(req, system, _load_history(user["id"], req.conversation_id))
+
+    # Só o cliente do OpenRouter expõe tool calling e streaming. Nos demais
+    # provedores a decisão de busca fica com a heurística da etapa 1 (ou com a
+    # instrução no prompt) — melhor uma resposta sem tool do que responder pelo
+    # provedor errado.
+    provider = resolved.get("provider", "openrouter")
+    c = get_client()
+    if provider == "openrouter" and not c.has_valid_key_format():
+        return {"__key_missing__": True, "model": model, "agent": agent, "messages": messages,
+                "tools": tools, "can_search": can_search, "resolved": resolved}
+
+    # --- Etapa 2: tool calling real (o MODELO decide pedir a ferramenta) ---
+    if can_search and not used_search and provider == "openrouter":
+        first = c.chat_completion_with_tools(
+            model=model, messages=messages, tools=tools,
+            temperature=req.temperature, max_tokens=req.max_tokens,
+            fallback_slugs=resolved["fallback_slugs"],
+        )
+        if first.success and first.tool_calls:
+            call = first.tool_calls[0]
+            query = str((call.get("arguments") or {}).get("query") or req.message)[:200]
+            emit("tool", {"name": "web_search", "query": query})
+            emit("status", {"stage": "searching", "message": f"Pesquisando: {query}"})
+            report = _run_web_search(user["id"], agent["id"], query)
+            used_search = True
+            search_report = report
+            # O resultado volta para o MODELO como contexto, não para o usuário cru.
+            block = _search_block(report)
+            call_id = str(call.get("id") or "call_0")
+            messages.append({"role": "assistant", "content": "", "tool_calls": [
+                {"id": call_id, "type": "function",
+                 "function": {"name": "web_search",
+                              "arguments": _safe_json(call.get("arguments"))}}
+            ]})
+            messages.append({"role": "tool",
+                             "tool_call_id": call_id,
+                             "content": block})
+            tool_message = block
+            _log_activity(user["id"], agent["id"], "web_search_tool",
+                          "ok" if report.get("ok") else "unavailable", report.get("provider", ""))
+        elif first.success and first.content:
+            # O modelo respondeu direto, sem precisar da ferramenta.
+            return {
+                "preanswered": first, "model": first.model_used or model, "agent": agent,
+                "messages": messages, "tools": tools, "can_search": can_search,
+                "used_search": False, "search_report": {},
+            }
+
+    return {
+        "model": model, "agent": agent, "messages": messages, "tools": tools,
+        "can_search": can_search, "used_search": used_search,
+        "search_report": search_report, "tool_message": tool_message,
+        "resolved": resolved,
+    }
+
+
+def _agentic_chat(req: ChatRequest, user: Dict[str, Any], resolved: Dict[str, Any],
+                  on_event: Optional[Any] = None) -> Dict[str, Any]:
+    """Fluxo completo do chat: persona → contexto → decisão de busca → modelo.
+
+    É o mesmo caminho para `/api/nemo/chat` e `/api/nemo/chat/stream`
+    (missão §6/§10):
+
+        mensagem → agente → tools → [busca na web] → contexto → modelo → resposta
+    """
+    prep = _prepare_chat(req, user, resolved, on_event)
+    if prep.get("__key_missing__"):
+        return prep
+    if prep.get("preanswered"):
+        return {"result": prep["preanswered"], "model": prep["model"], "agent": prep["agent"],
+                "latency_ms": round(prep["preanswered"].latency_ms, 1), "used_search": False,
+                "search_report": {}}
+
+    agent = prep["agent"]
+    model = prep["model"]
+    provider = resolved.get("provider", "openrouter")
+    started = time.perf_counter()
+    result = _generate_sync(
+        provider, model, prep["messages"], req.temperature, req.max_tokens,
+        fallback_slugs=resolved.get("fallback_slugs"),
+    )
+    latency_ms = round((time.perf_counter() - started) * 1000, 1)
+    return {
+        "result": result, "model": model, "agent": agent, "provider": provider,
+        "latency_ms": latency_ms, "used_search": prep["used_search"],
+        "search_report": prep["search_report"],
+    }
+
+
+def _chat_failure_response(result: Any, req: ChatRequest, model: str, agent: Dict[str, Any],
+                           latency_ms: float, provider: str = "openrouter") -> Dict[str, Any]:
+    """Converte uma CompletionResult com erro numa resposta honesta para o usuário.
+
+    O rótulo acompanha o provedor real: chamar Gemini e responder "chave do
+    OpenRouter inválida" é errado e manda o usuário corrigir o serviço errado."""
+    provider = getattr(result, "provider", None) or provider or "openrouter"
+    if provider != "openrouter":
+        detail = (result.error_message or "")[:300]
+        return {
+            "ok": False, "agent": req.agent, "error_code": "ai_error",
+            "error": f"Falha ao chamar o provedor {_provider_name(provider)}.",
+            "content": (
+                f"⚠️ Não consegui concluir a solicitação no provedor "
+                f"**{_provider_name(provider)}**.\n\n"
+                "Tente outro provedor na Central de IA ou tente novamente em instantes."
+            ),
+            "detail": detail, "provider": provider,
+            "model_used": result.model_used or model, "is_fallback": False,
+            "offline": False, "latency_ms": latency_ms,
+        }
+    if _is_credits_error(result.error_message or ""):
+        return {
+            "ok": False, "agent": req.agent, "error_code": "openrouter_no_credits",
+            "error": "A conta do OpenRouter está sem crédito.",
+            "content": (
+                "⚠️ O acesso ao OpenRouter foi recusado por falta de crédito na conta "
+                "(HTTP 402 — a chave é válida, mas a conta não tem saldo).\n\n"
+                "Para voltar a responder: adicione créditos em "
+                "openrouter.ai/settings/credits e tente novamente. Não é preciso "
+                "trocar a chave."
+            ),
+            "model_used": result.model_used or model, "is_fallback": False,
+            "offline": True, "latency_ms": latency_ms,
+        }
+    if _is_auth_error(result.error_message or ""):
+        return {
+            "ok": False, "agent": req.agent, "error_code": "openrouter_auth",
+            "error": "Credencial do OpenRouter inválida ou expirada.",
+            "content": (
+                "⚠️ Minha chave de acesso ao OpenRouter está inválida ou expirada (HTTP 401), "
+                "então não consigo chamar modelos de IA no momento.\n\n"
+                "Para voltar a responder: troque `OPENROUTER_API_KEY` no `.env` por uma chave "
+                "válida e reinicie o servidor."
+            ),
+            "model_used": result.model_used or model, "is_fallback": False,
+            "offline": True, "latency_ms": latency_ms,
+        }
+    if _is_connection_error(result.error_message or ""):
+        return {
+            "ok": False, "agent": req.agent, "error_code": "openrouter_unavailable",
+            "error": "OpenRouter temporariamente inacessível.",
+            "content": (
+                "⚠️ Não consegui acessar o OpenRouter agora (rede indisponível ou "
+                "bloqueada), então não consigo chamar modelos de IA neste momento.\n\n"
+                "Verifique sua conexão e o acesso a `openrouter.ai` e reinicie o servidor."
+            ),
+            "model_used": result.model_used or model, "is_fallback": False,
+            "offline": True, "latency_ms": latency_ms,
+        }
+    return {
+        "ok": False, "agent": req.agent, "error_code": "openrouter_error",
+        "error": "Erro ao chamar o modelo selecionado.",
+        "content": "Não consegui concluir a solicitação no modelo selecionado.",
+        "detail": (result.error_message or "")[:300],
+        "model_used": result.model_used, "is_fallback": result.is_fallback,
+        "offline": False, "latency_ms": latency_ms,
+    }
+
+
+def _chat_without_search(req: ChatRequest, resolved: Dict[str, Any],
+                         user_id: str = "") -> Dict[str, Any]:
+    """Caminho degradado: responde com o modelo, sem etapa de busca.
+
+    Usado quando a preparação falha (rede, provedor, bug). Preferimos uma
+    resposta sem cites a nenhuma resposta.
+    """
+    agent = resolved["agent"]
+    model = resolved["model"]
+    provider = resolved.get("provider", "openrouter")
+    if provider == "openrouter" and not get_client().has_valid_key_format():
+        return {"__key_missing__": True, "model": model, "agent": agent}
+    system = _build_system_prompt(agent, req.context or "", can_search=False)
+    messages = _build_messages(req, system, _load_history(user_id, req.conversation_id))
+    started = time.perf_counter()
+    result = _generate_sync(
+        provider, model, messages, req.temperature, req.max_tokens,
+        fallback_slugs=resolved.get("fallback_slugs"),
+    )
+    return {
+        "result": result, "model": model, "agent": agent, "provider": provider,
+        "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+        "used_search": False, "search_report": {},
+    }
 
 
 @app.post("/api/nemo/chat")
@@ -1301,153 +1916,65 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
     user = _require_user(request)
     if not AI_RATE_LIMITER.allow(user["id"]):
         return {
-            "ok": True,
-            "agent": req.agent,
+            "ok": True, "agent": req.agent, "offline": True, "rate_limited": True, "latency_ms": 0,
             "content": (
                 f"⏳ Você atingiu o limite de **{AI_REQUEST_LIMIT_PER_MINUTE}** requisições de IA "
                 "por minuto. Aguarde um instante e tente de novo.\n\n"
                 "O limite é ajustável em `.env` → `NEMO_AI_RATE_LIMIT`."),
-            "offline": True,
-            "rate_limited": True,
-            "latency_ms": 0,
         }
-    agent = _agent_persona(req.agent) or {
-        "id": req.agent, "name": "Nemo", "title": "Assistente", "category": "assistant",
-        "role": "Assistente pessoal.", "defaultModel": CATEGORY_MODEL_DEFAULT,
-    }
-    model = req.model or agent.get("defaultModel") or CATEGORY_MODEL_DEFAULT
-    mi = get_model_by_id(model)
-    if mi is None:
-        raise HTTPException(status_code=400, detail="Modelo não configurado para o NEMO.")
-    fallback_slugs = list(mi.fallback_slugs)
-    system = _build_system_prompt(agent, req.context)
-    messages: List[Dict[str, str]] = [{"role": "system", "content": system}]
-    for m in req.messages[-12:]:
-        if m.role in ("user", "assistant") and m.content:
-            messages.append({"role": m.role, "content": m.content[:12000]})
-    if req.message:
-        messages.append({"role": "user", "content": req.message[:12000]})
-    if len(messages) == 1:
-        messages.append({"role": "user", "content": "Olá."})
-
-    configured_ids = [p["id"] for p in AI_SERVICE.provider_catalog() if p["configured"]]
-    user_key_providers: set = set()
+    resolved = _resolve_agent_and_model(req, user["id"])
     try:
-        user_key_providers = {k.get("provider") for k in (DATA_STORE.list_api_keys(user["id"]) or [])}
-    except Exception:
-        user_key_providers = set()
-
-    api_key = None
-    provider = "openrouter"  # catálogo da NEMO roda 100% via OpenRouter
-    if provider not in configured_ids:
-        try:
-            api_key = DATA_STORE.get_api_key(user["id"], provider)
-        except Exception:
-            api_key = None
-    if not AI_SERVICE.has_system_key(provider) and not api_key:
-        # Nenhuma chave para o provedor escolhido → tenta degradar graciosamente
-        # para qualquer provedor realmente configurado (missão §62).
-        if configured_ids:
-            provider = configured_ids[0]
-        elif user_key_providers:
-            provider = sorted(user_key_providers)[0]
-            try:
-                api_key = DATA_STORE.get_api_key(user["id"], provider)
-            except Exception:
-                api_key = None
-        else:
-            return _offline_no_provider(provider, req.agent, model)
-
-    fallback_slugs: List[str] = []
-    mi = get_model_by_id(model)
-    if mi:
-        fallback_slugs = mi.fallback_slugs
-
-    c = get_client()
-    started = time.perf_counter()
-    if not c.has_valid_key_format():
+        outcome = _agentic_chat(req, user, resolved)
+    except Exception as exc:
+        # A busca na web é um EXTRA: se ela (ou qualquer passo de preparação)
+        # explodir, ainda respondemos com o modelo em vez de devolver 500.
+        warn("chat: pipeline", exc, user=user["id"], agent=req.agent)
+        outcome = _chat_without_search(req, resolved, user["id"])
+    if outcome.get("__key_missing__"):
         return {
-            "ok": False,
-            "agent": req.agent,
-            "content": "⚠️ Minha chave de acesso ao OpenRouter não está configurada. Crie um arquivo `.env` a partir de `.env.example` com sua chave do OpenRouter para eu responder de verdade.\n\nEnquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro. 🐟",
+            "ok": False, "agent": req.agent, "error_code": "missing_key",
             "error": "OPENROUTER_API_KEY não configurada.",
-            "error_code": "missing_key",
-            "model_used": model,
-            "is_fallback": False,
-            "offline": True,
-            "latency_ms": 0,
+            "content": (
+                "⚠️ Minha chave de acesso ao OpenRouter não está configurada. Crie um "
+                "arquivo `.env` a partir de `.env.example` com sua chave do OpenRouter "
+                "para eu responder de verdade."
+            ),
+            "model_used": outcome["model"], "is_fallback": False, "offline": True, "latency_ms": 0,
         }
-    result: CompletionResult = c.chat_completion(
-        model=model,
-        messages=messages,
-        temperature=req.temperature,
-        max_tokens=req.max_tokens,
-        fallback_slugs=fallback_slugs,
-    )
-    latency_ms = round((time.perf_counter() - started) * 1000, 1)
-    model_used = result.model_used or model
 
-    if result.success:
-        _persist_chat(user["id"], agent["id"], req.message, result.content)
-        _log_activity(user["id"], agent["id"], "chat", "ok", result.provider, result.model_used, result.latency_ms,
-                      result.prompt_tokens, result.completion_tokens, result.total_tokens)
-        return {
-            "ok": True,
-            "agent": req.agent,
-            "content": result.content,
-            "model_used": result.model_used,
-            "provider": result.provider,
-            "is_fallback": result.is_fallback,
-            "latency_ms": latency_ms,
-            "prompt_tokens": result.prompt_tokens,
-            "completion_tokens": result.completion_tokens,
-            "total_tokens": result.total_tokens,
-            "finish_reason": result.finish_reason,
-        }
-    _log_activity(user["id"], agent["id"], "chat", "error", result.provider, result.model_used, latency_ms,
-                  result.prompt_tokens, result.completion_tokens, result.total_tokens)
-    if _is_auth_error(result.error_message or ""):
-        return {
-            "ok": False,
-            "agent": req.agent,
-            "content": (
-                "⚠️ Minha chave de acesso ao OpenRouter está inválida ou expirada (HTTP 401), então não consigo chamar modelos de IA no momento. 🐟\n\n"
-                "Para voltar a responder de verdade:\n"
-                "1. Troque `OPENROUTER_API_KEY` no arquivo `.env` por uma chave válida.\n"
-                "2. Reinicie o servidor.\n\n"
-                "Enquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro."),
-            "error": "Credencial do OpenRouter inválida ou expirada.",
-            "error_code": "openrouter_auth",
-            "model_used": result.model_used or model,
-            "is_fallback": False,
-            "offline": True,
-            "latency_ms": latency_ms,
-        }
-    if _is_connection_error(result.error_message or ""):
-        return {
-            "ok": False,
-            "agent": req.agent,
-            "content": (
-                "⚠️ Não consegui acessar o OpenRouter agora (rede indisponível ou bloqueada), então não consigo chamar modelos de IA no momento. 🐟\n\n"
-                "Verifique sua conexão com a internet e o acesso a `openrouter.ai`, confirme a chave no `.env` e reinicie o servidor.\n\n"
-                "Enquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro."),
-            "error": "OpenRouter temporariamente inacessível.",
-            "error_code": "openrouter_unavailable",
-            "model_used": result.model_used or model,
-            "is_fallback": False,
-            "offline": True,
-            "latency_ms": latency_ms,
-        }
+    agent = outcome["agent"]
+    result = outcome["result"]
+    model = outcome["model"]
+    latency_ms = outcome["latency_ms"]
+
+    if not result.success:
+        _log_activity(user["id"], agent["id"], "chat", "error", result.provider, result.model_used, latency_ms)
+        resp = _chat_failure_response(result, req, model, agent, latency_ms,
+                                   provider=outcome.get("provider", "openrouter"))
+        return resp
+
+    conversation_id = _persist_chat(
+        user["id"], agent["id"], req.message, result.content, req.conversation_id,
+        req.new_conversation,
+    ) or ""
+    _log_activity(user["id"], agent["id"], "chat", "ok", result.provider, result.model_used,
+                  result.latency_ms, result.prompt_tokens, result.completion_tokens, result.total_tokens)
     return {
-        "ok": False,
+        "ok": True,
         "agent": req.agent,
-        "content": "Não consegui concluir a solicitação no modelo selecionado.",
-        "error": "Erro ao chamar o modelo selecionado.",
-        "error_code": "openrouter_error",
+        "content": result.content,
+        "conversation_id": conversation_id,
         "model_used": result.model_used,
+        "provider": result.provider,
         "is_fallback": result.is_fallback,
-        "offline": False,
         "latency_ms": latency_ms,
+        "prompt_tokens": result.prompt_tokens,
+        "completion_tokens": result.completion_tokens,
+        "total_tokens": result.total_tokens,
+        "finish_reason": result.finish_reason,
+        "used_search": outcome["used_search"],
+        "search_provider": outcome["search_report"].get("provider", ""),
+        "search_results": outcome["search_report"].get("results", [])[:6] if outcome["used_search"] else [],
     }
 
 
@@ -1455,40 +1982,42 @@ def _provider_name(provider: str) -> str:
     return PROVIDER_META.get(provider or "", PROVIDER_META["openrouter"])["name"]
 
 
-def _offline_no_provider(provider: str, agent_id: str, model: str) -> Dict[str, Any]:
-    """Resposta graciosa quando nenhum provedor está configurado (missão §45/62)."""
-    _log_activity("?", agent_id, "chat", "no_provider", provider, model)
-    return {
-        "ok": True,
-        "agent": agent_id,
-        "content": (
-            "⚠️ Nenhum provedor de IA está configurado no momento, então não posso "
-            "responder de verdade. 🐟\n\n"
-            "Para ativar, configure pelo menos um deles:\n"
-            "- **Gemini** (https://aistudio.google.com) → `GEMINI_API_KEY` no `.env`\n"
-            "- **Groq** (https://console.groq.com) → `GROQ_API_KEY` no `.env`\n"
-            "- **OpenRouter** (https://openrouter.ai/keys) → `OPENROUTER_API_KEY` no `.env`\n\n"
-            "E em **Configurações → Inteligência Artificial** você pode usar sua própria chave.\n\n"
-            "Enquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro."),
-        "model_used": model,
-        "provider": provider,
-        "is_fallback": True,
-        "offline": True,
-        "latency_ms": 0,
-    }
 
+def _persist_chat(user_id: str, agent_id: str, user_message: str, reply: str,
+                 conversation_id: str = "", new_conversation: bool = False) -> Optional[str]:
+    """Grava a troca (pergunta + resposta) na conversa CERTA do usuário.
 
-def _persist_chat(user_id: str, agent_id: str, user_message: str, reply: str) -> None:
-    """Persiste a conversa (Supabase ou local) — nunca quebra o chat."""
+    Antes esta função usava sempre `convs[0]`: todo o chat do agente ia para
+    uma única conversa, e o histórico virava uma mistura sem separação. Agora:
+      - `conversation_id` válido → continua aquela thread;
+      - `new_conversation`       → sempre cria uma thread nova;
+      - sem nada                → cai na conversa mais recente (legado).
+    """
+    conv_id = "" if new_conversation else conversation_id
     try:
-        convs = DATA_STORE.list_conversations(user_id, agent_id) or []
-        conv = convs[0] if convs else DATA_STORE.create_conversation(user_id, agent_id, (user_message or "")[:60])
+        if conv_id and not DATA_STORE.conversation_belongs_to(user_id, conv_id):
+            # conversation_id de outro usuário (ou inexistente) é descartado:
+            # nunca mistura contexto entre contas.
+            warn("chat: conversation_id recusado", ValueError("conversa não pertence ao usuário"),
+                 user=user_id, conversation_id=conv_id)
+            conv_id = ""
+        if not conv_id and not new_conversation:
+            convs = DATA_STORE.list_conversations(user_id, agent_id) or []
+            if convs:
+                conv_id = convs[0]["id"]
+        if not conv_id:
+            conv_id = (DATA_STORE.create_conversation(user_id, agent_id, (user_message or "")[:60]) or {}).get("id", "")
+
+        if not conv_id:
+            return ""
         if user_message:
-            DATA_STORE.append_message(user_id, conv["id"], "user", user_message[:12000], {})
+            DATA_STORE.append_message(user_id, conv_id, "user", user_message[:12000], {})
         if reply:
-            DATA_STORE.append_message(user_id, conv["id"], "assistant", reply[:20000], {})
-    except Exception:
-        pass
+            DATA_STORE.append_message(user_id, conv_id, "assistant", reply[:20000], {})
+        return conv_id
+    except Exception as exc:
+        warn("chat: persistencia falhou", exc, user=user_id, agent=agent_id, conversation_id=conv_id)
+        return conv_id or ""
 
 
 def _log_activity(user_id: str, agent_id: str, operation: str, status: str,
@@ -1497,8 +2026,8 @@ def _log_activity(user_id: str, agent_id: str, operation: str, status: str,
     try:
         DATA_STORE.log_activity(user_id, agent_id, operation, status, provider, model, latency,
                                 prompt_tokens, completion_tokens, total_tokens)
-    except Exception:
-        pass
+    except Exception as exc:
+        warn("atividade: log", exc, user=user_id, operation=operation)
 
 
 # ---------------------------------------------------------------------------
@@ -1516,8 +2045,8 @@ def ai_config(request: Request) -> Dict[str, Any]:
     try:
         settings = DATA_STORE.get_ai_settings(user["id"]) or {}
         keys = DATA_STORE.list_api_keys(user["id"]) or []
-    except Exception:
-        pass
+    except Exception as exc:
+        warn("ia/config: leitura", exc, user=user["id"], backend=DATA_STORE.name)
     return {
         "ok": True,
         "system": {
@@ -1545,7 +2074,8 @@ def ai_save_config(req: AiSettingsRequest, request: Request) -> Dict[str, Any]:
         merged: Dict[str, Dict[str, Any]] = {}
         try:
             merged = dict((DATA_STORE.get_ai_settings(user["id"]) or {}).get("agent_overrides") or {})
-        except Exception:
+        except Exception as exc:
+            warn("ia/config: leitura de overrides", exc, user=user["id"])
             merged = {}
         for agent_id, spec in req.agent_overrides.items():
             vals = {k: v for k, v in spec.model_dump().items() if v is not None}
@@ -1589,7 +2119,8 @@ def ai_delete_key(provider: str, request: Request) -> Dict[str, Any]:
     user = _require_user(request)
     try:
         ok = DATA_STORE.delete_api_key(user["id"], provider)
-    except Exception:
+    except Exception as exc:
+        warn("ia/chaves: exclusao", exc, user=user["id"])
         ok = False
     _log_activity(user["id"], "nemo", "delete_key", "ok" if ok else "not_found", provider)
     return {"ok": ok, "deleted": provider}
@@ -1607,7 +2138,8 @@ def ai_test(req: AiTestRequest, request: Request) -> Dict[str, Any]:
     if not api_key:
         try:
             api_key = DATA_STORE.get_api_key(user["id"], provider) or None
-        except Exception:
+        except Exception as exc:
+            warn("ia/test: leitura de chave", exc, user=user["id"])
             api_key = None
         if not api_key and not AI_SERVICE.has_system_key(provider):
             return {"ok": False, "provider": provider, "message": "Nenhuma chave configurada para este provedor."}
@@ -1626,11 +2158,14 @@ def ai_search(request: Request, query: str = Query("", description="Termo de bus
         if res.get("ok"):
             try:
                 DATA_STORE.save_search(user["id"], agent, query, res.get("provider", ""), res.get("results", []))
-            except Exception:
-                pass
+            except Exception as exc:
+                warn("busca: persistencia do resultado", exc, user=user["id"])
             _log_activity(user["id"], agent, "web_search", "ok", res.get("provider", ""))
+        else:
+            LOG.info("busca sem resultado | user=%s provider=%s", user["id"], res.get("provider", "none"))
         return res
     except WebSearchError as exc:
+        LOG.info("busca indisponivel | user=%s | %s", user["id"], exc.message)
         return {"ok": False, "query": query, "results": [], "error": exc.message}
 
 
@@ -1640,7 +2175,7 @@ def ai_memories(request: Request, agent: str = "") -> Dict[str, Any]:
     try:
         return {"ok": True, "memories": DATA_STORE.list_memories(user["id"], agent or None)}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise _internal_error("memórias: listagem", exc)
 
 
 @app.post("/api/nemo/ai/memories")
@@ -1668,7 +2203,7 @@ def ai_activity(request: Request, limit: int = 50) -> Dict[str, Any]:
     try:
         return {"ok": True, "activity": DATA_STORE.list_activity(user["id"], int(limit) or 50)}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise _internal_error("atividade: listagem", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -1699,7 +2234,7 @@ def conversations_list(request: Request, agent: str = "", q: str = "") -> Dict[s
             convs = found
         return {"ok": True, "conversations": convs}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise _internal_error("conversas: listagem", exc)
 
 
 @app.post("/api/nemo/conversations")
@@ -1709,10 +2244,27 @@ def conversations_create(req: ConversationRequest, request: Request) -> Dict[str
     return {"ok": True, "conversation": conv}
 
 
+def _valid_conversation_id(conversation_id: str) -> bool:
+    """`conversations/None/messages` não é erro do banco: é cliente mandando lixo.
+
+    Sem esta checagem o Supabase respondia 400 (`invalid input syntax for type
+    uuid`) e a rota devolvia 500 — o front exibia "tente novamente" para um
+    erro que só o cliente podia corrigir."""
+    try:
+        return str(uuid_lib.UUID(str(conversation_id))).strip() == str(conversation_id).strip()
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
 @app.delete("/api/nemo/conversations/{conversation_id}")
 def conversations_delete(conversation_id: str, request: Request) -> Dict[str, Any]:
     user = _require_user(request)
-    deleted = DATA_STORE.delete_conversation(user["id"], conversation_id)
+    if not _valid_conversation_id(conversation_id):
+        raise HTTPException(status_code=400, detail="Identificador de conversa inválido.")
+    try:
+        deleted = DATA_STORE.delete_conversation(user["id"], conversation_id)
+    except Exception as exc:
+        raise _internal_error("conversas: excluir", exc)
     if not deleted:
         raise HTTPException(status_code=404, detail="Conversa não encontrada.")
     return {"ok": True, "deleted": conversation_id}
@@ -1721,10 +2273,12 @@ def conversations_delete(conversation_id: str, request: Request) -> Dict[str, An
 @app.get("/api/nemo/conversations/{conversation_id}/messages")
 def conversations_messages(conversation_id: str, request: Request) -> Dict[str, Any]:
     user = _require_user(request)
+    if not _valid_conversation_id(conversation_id):
+        raise HTTPException(status_code=400, detail="Identificador de conversa inválido.")
     try:
         return {"ok": True, "messages": DATA_STORE.list_messages(user["id"], conversation_id)}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise _internal_error("conversas: mensagens", exc)
 
 
 @app.get("/api/nemo/profile")
@@ -1734,6 +2288,199 @@ def profile_get(request: Request) -> Dict[str, Any]:
     base = {"id": user["id"], "email": user.get("email", ""), "name": user.get("name", "")}
     base.update({k: v for k, v in profile.items() if k in ("name", "email", "language", "avatar", "default_agent", "preferences")})
     return {"ok": True, "profile": base}
+
+
+# ---------------------------------------------------------------------------
+# Streaming SSE do chat — missão §6/§12
+# A tela não pode ficar 8-20s congelada esperando a resposta inteira.
+# ---------------------------------------------------------------------------
+
+SSE_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    # O nginx/X-Accel-Buffering desliga o buffer, senão o SSE chega de uma vez
+    # e o efeito do streaming se perde em produção.
+    "X-Accel-Buffering": "no",
+}
+
+
+def _sse(event: str, data: Any) -> str:
+    """Serializa um evento SSE. `data` é sempre JSON (evita quebra de linha)."""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@app.post("/api/nemo/chat/stream")
+def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
+    user = _require_user(request)
+
+    if not AI_RATE_LIMITER.allow(user["id"]):
+        def limited() -> Any:
+            yield _sse("error", {
+                "ok": False, "rate_limited": True, "agent": req.agent,
+                "error_code": "rate_limited",
+                "content": (
+                    f"⏳ Você atingiu o limite de **{AI_REQUEST_LIMIT_PER_MINUTE}** requisições "
+                    "de IA por minuto. Aguarde um instante e tente de novo."),
+            })
+            yield _sse("done", {"ok": False})
+        return StreamingResponse(limited(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+    try:
+        resolved = _resolve_agent_and_model(req, user["id"])
+    except HTTPException as exc:
+        # `except ... as exc` remove a variável ao sair do bloco, e o gerador
+        # SSE só roda depois — capturamos o texto aqui.
+        detail = exc.detail
+        def rejected() -> Any:
+            yield _sse("error", {"ok": False, "agent": req.agent, "content": detail})
+            yield _sse("done", {"ok": False})
+        return StreamingResponse(rejected(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+    def generate() -> Any:
+        started = time.perf_counter()
+        used_slug = resolved["model"]
+        queue: List[Dict[str, Any]] = []
+        send: Any = queue.append
+
+        def on_event(kind: str, payload: Dict[str, Any]) -> None:
+            send({"type": kind, "data": payload})
+
+        # 1) Fase de preparação (mesma do chat normal): persona, memória, busca.
+        yield _sse("start", {"agent": req.agent, "model": resolved["model"]})
+        try:
+            prep = _prepare_chat(req, user, resolved, on_event)
+        except Exception as exc:
+            warn("chat/stream: preparacao", exc, user=user["id"])
+            yield _sse("error", {"ok": False, "content": "Falha interna ao preparar a resposta."})
+            yield _sse("done", {"ok": False})
+            return
+
+        # Esvazia o que a preparação acumulou (status/tool).
+        while queue:
+            item = queue.pop(0)
+            yield _sse(item["type"], item["data"])
+
+        if prep.get("__key_missing__"):
+            yield _sse("error", {
+                "ok": False, "agent": req.agent, "error_code": "missing_key",
+                "content": (
+                    "⚠️ Minha chave de acesso ao OpenRouter não está configurada. "
+                    "Copie `.env.example` para `.env` com sua chave do OpenRouter para "
+                    "eu responder de verdade."),
+            })
+            yield _sse("done", {"ok": False})
+            return
+
+        if prep.get("preanswered"):
+            # O modelo já respondeu direto na rodada de tools: só repassa.
+            used_slug = prep["preanswered"].model_used or used_slug
+            answer = [prep["preanswered"].content or ""]
+            yield _sse("delta", {"text": answer[0]})
+        elif resolved.get("provider", "openrouter") != "openrouter":
+            # Só o cliente do OpenRouter sabe fazer streaming token a token.
+            # Em vez de fingir que streamed, avisamos e deixamos o frontend
+            # cair no chat síncrono (que respeita o provedor escolhido).
+            provider = resolved["provider"]
+            yield _sse("error", {
+                "ok": False, "agent": req.agent,
+                "error_code": "stream_unsupported_provider",
+                "content": (
+                    f"O provedor **{provider}** não transmite resposta palavra a palavra. "
+                    "Respondendo de uma vez."
+                ),
+                "fallback_to_sync": True,
+                "provider": provider,
+            })
+            started = time.perf_counter()
+            result = _generate_sync(
+                provider, prep["model"], prep["messages"], req.temperature, req.max_tokens,
+                fallback_slugs=resolved.get("fallback_slugs"),
+            )
+            if not result.success:
+                yield _sse("error", _chat_failure_response(
+                    result, req, prep["model"], prep["agent"],
+                    round((time.perf_counter() - started) * 1000, 1), provider=provider,
+                ))
+                yield _sse("done", {"ok": False})
+                return
+            answer = [result.content or ""]
+            yield _sse("delta", {"text": answer[0]})
+        else:
+            # 2) Gera token a token.
+            model = prep["model"]
+            c = get_client()
+            slugs = [model] + [s for s in resolved["fallback_slugs"] if s and s != model]
+            answer: List[str] = []
+            last_error = ""
+            errors_seen: List[str] = []
+            for idx, slug in enumerate(slugs):
+                used_slug = slug
+                answer = []
+
+                try:
+                    for piece in c.stream_chat(
+                        model=slug, messages=prep["messages"],
+                        temperature=req.temperature, max_tokens=req.max_tokens,
+                    ):
+                        if piece.startswith(TOOL_CALL_MARKER):
+                            # Ferramenta só é resolvida na fase de preparação;
+                            # se aparecer aqui é ruído do modelo — ignora.
+                            continue
+                        answer.append(piece)
+                        yield _sse("delta", {"text": piece})
+                    break
+                except Exception as exc:
+                    last_error = str(exc)
+                    errors_seen.append(last_error)
+                    if idx < len(slugs) - 1:
+                        nxt = slugs[idx + 1]
+                        LOG.info("stream: %s falhou (%s), tentando %s", slug, last_error[:80], nxt)
+                        # O parcial JÁ FOI emitido ao cliente (deltas são
+                        # enviados assim que chegam). Mandamos o evento `reset`
+                        # para ele descartar o que recebeu e mostrar o fallback.
+                        # Apagar caracteres com retrocesso não é confiável.
+                        yield _sse("reset", {"reason": "fallback", "model": nxt})
+                        continue
+                    break
+            # A ÚLTIMA mensagem não é necessariamente a causa raiz: se o
+            # primário cair por falta de crédito (402) e o fallback responder
+            # 400 "not a valid model ID", a causa real se perde e o usuário
+            # recebe um erro que não ajuda. Preferimos a primeira falha de
+            # conta/credenção; o erro específico do modelo serve de detalhe.
+            root_error = last_error
+            for candidate in errors_seen:
+                if _is_credits_error(candidate) or _is_auth_error(candidate):
+                    root_error = candidate
+                    break
+            if not answer:
+                yield _sse("error", _chat_failure_response(
+                    CompletionResult(success=False, content="", model_used=used_slug,
+                                    original_model=model, is_fallback=used_slug != model,
+                                    latency_ms=0.0, error_message=root_error),
+                    req, used_slug, prep["agent"],
+                    round((time.perf_counter() - started) * 1000, 1),
+                    provider=resolved.get("provider", "openrouter"),
+                ))
+                yield _sse("done", {"ok": False})
+                return
+        # 3) Persistência: só depois de gerar tudo, para não gravar parcial.
+        content = "".join(answer)
+        conversation_id = _persist_chat(
+            user["id"], prep["agent"]["id"], req.message, content, req.conversation_id,
+            req.new_conversation,
+        ) or ""
+        _log_activity(user["id"], prep["agent"]["id"], "chat_stream", "ok",
+                      "openrouter", used_slug, round((time.perf_counter() - started) * 1000, 1))
+        yield _sse("sources", {
+            "provider": prep.get("search_report", {}).get("provider", ""),
+            "results": prep.get("search_report", {}).get("results", [])[:6] if prep.get("used_search") else [],
+        })
+        yield _sse("done", {
+            "ok": True, "agent": req.agent, "conversation_id": conversation_id,
+            "model_used": used_slug, "used_search": prep.get("used_search", False),
+        })
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers=SSE_HEADERS)
 
 
 @app.post("/api/nemo/profile")
@@ -1750,6 +2497,10 @@ def profile_save(req: ProfileRequest, request: Request) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 VALID_TASK_STATUS = ("pending", "running", "done", "error", "cancelled")
+# A UI envia em português; o banco guarda os mesmos rótulos. Antes a validação
+# aceitava só 4 de 6 valores e REBAIXAVA silenciosamente qualquer outro
+# (ex.: "alta" virava "normal" sem aviso nenhum).
+VALID_TASK_PRIORITY = ("urgente", "importante", "normal", "baixa")
 
 
 @app.get("/api/nemo/tasks")
@@ -1758,23 +2509,40 @@ def tasks_list(request: Request) -> Dict[str, Any]:
     try:
         return {"ok": True, "tasks": DATA_STORE.list_tasks(user["id"])}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise _internal_error("tarefas: listagem", exc)
 
 
 @app.post("/api/nemo/tasks")
 def tasks_save(req: TaskRequest, request: Request) -> Dict[str, Any]:
     user = _require_user(request)
+    if not (req.title or "").strip():
+        raise HTTPException(status_code=400, detail="Informe o título da tarefa.")
+    if req.priority not in VALID_TASK_PRIORITY:
+        # Agora o cliente recebe o motivo em vez de ver a tarefa mudar sozinha.
+        raise HTTPException(
+            status_code=400,
+            detail=f"Prioridade inválida '{req.priority}'. Use: {', '.join(VALID_TASK_PRIORITY)}.",
+        )
+    if req.status not in VALID_TASK_STATUS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Status inválido '{req.status}'. Use: {', '.join(VALID_TASK_STATUS)}.",
+        )
     task = {
         "id": req.id or _gen_event_id(),
         "title": (req.title or "").strip() or "Tarefa sem título",
-        "priority": req.priority if req.priority in ("urgente", "importante", "normal", "baixa") else "normal",
+        "priority": req.priority,
         "agent_id": req.agentId or "nemo",
-        "status": req.status if req.status in VALID_TASK_STATUS else "pending",
+        "status": req.status,
         "created_at": _now_ms(),
         "due_date": req.dueDate,
         "done_at": _now_ms() if req.status == "done" else None,
     }
-    DATA_STORE.save_task(user["id"], task)
+    try:
+        DATA_STORE.save_task(user["id"], task)
+    except Exception as exc:
+        warn("tarefas: criacao", exc, user=user["id"], backend=DATA_STORE.name)
+        raise HTTPException(status_code=503, detail="Não foi possível salvar a tarefa agora.")
     return {"ok": True, "task": task}
 
 
@@ -1925,7 +2693,7 @@ def _apply_sync_operation(user_id: str, op: SyncOperation) -> Dict[str, Any]:
             conv = DATA_STORE.create_conversation(user_id, data.get("agent_id", "nemo"), data.get("title", "Nova conversa"))
             return {"server_id": conv.get("id")}
         elif operation == "update":
-            DATA_STORE.update_conversation(data["id"], data)
+            DATA_STORE.update_conversation(user_id, data["id"], data)
             return {"server_id": data["id"]}
         elif operation == "delete":
             DATA_STORE.delete_conversation(user_id, data["id"])
@@ -1933,7 +2701,13 @@ def _apply_sync_operation(user_id: str, op: SyncOperation) -> Dict[str, Any]:
 
     elif store == "messages":
         if operation == "create":
-            DATA_STORE.append_message(user_id, data["conversation_id"], data["role"], data["content"], data.get("meta"))
+            # Nunca aceita conversation_id de outro usuário: a posse é
+            # verificada ANTES de gravar (anti-IDOR / anti-contexto cruzado).
+            conv_id = data.get("conversation_id", "")
+            if conv_id and not DATA_STORE.conversation_belongs_to(user_id, conv_id):
+                raise ValueError("conversação não pertence a este usuário")
+            DATA_STORE.append_message(user_id, conv_id, data.get("role", "user"),
+                                      data.get("content", ""), data.get("meta"))
             return {"server_id": "created"}
         elif operation == "delete":
             pass
@@ -1958,8 +2732,10 @@ def _apply_sync_operation(user_id: str, op: SyncOperation) -> Dict[str, Any]:
 
     elif store == "events":
         if operation in ("create", "update"):
-            DATA_STORE.save_event(user_id, data)
-            return {"server_id": data.get("id")}
+            if not data.get("id"):
+                data["id"] = _gen_event_id()
+            saved = DATA_STORE.save_event(user_id, data)
+            return {"server_id": (saved or {}).get("id", data.get("id"))}
         elif operation == "delete":
             DATA_STORE.delete_event(user_id, data["id"])
             return {"server_id": data["id"]}
@@ -1995,15 +2771,16 @@ def _get_store_changes_since(user_id: str, store: str, since: int) -> List[Dict[
         elif store == "tasks":
             items = DATA_STORE.list_tasks(user_id)
         elif store == "events":
-            items = DATA_STORE.list_events()
+            items = DATA_STORE.list_events(user_id)
         elif store == "ai_keys":
             items = DATA_STORE.list_api_keys(user_id)
         elif store == "profile":
             items = [DATA_STORE.get_profile(user_id)]
         elif store == "ai_settings":
             items = [DATA_STORE.get_ai_settings(user_id)]
-    except Exception:
-        pass
+    except Exception as exc:
+        warn(f"sync/pull: leitura de {store}", exc, user=user_id)
+        return []
 
     filtered = []
     for item in items:
@@ -2022,7 +2799,7 @@ def _get_store_changes_since(user_id: str, store: str, since: int) -> List[Dict[
 def _apply_local_wins(user_id: str, store: str, data: Dict[str, Any]) -> None:
     """Força dados locais no servidor."""
     if store == "conversations":
-        DATA_STORE.update_conversation(data["id"], data)
+        DATA_STORE.update_conversation(user_id, data["id"], data)
     elif store == "memories":
         pass
     elif store == "tasks":
@@ -2045,7 +2822,7 @@ def _apply_merge(user_id: str, store: str, data: Dict[str, Any]) -> None:
                 break
         if existing:
             merged = {**existing, **{k: v for k, v in data.items() if v is not None}}
-            DATA_STORE.update_conversation(data["id"], merged)
+            DATA_STORE.update_conversation(user_id, data["id"], merged)
     elif store == "tasks":
         DATA_STORE.save_task(user_id, data)
     elif store == "events":
@@ -2054,12 +2831,29 @@ def _apply_merge(user_id: str, store: str, data: Dict[str, Any]) -> None:
         DATA_STORE.save_profile(user_id, data)
 
 
+def _is_credits_error(message: str) -> bool:
+    """Detecta falta de cr��dito/cota na conta do OpenRouter (HTTP 402).
+
+    Precisa vir ANTES de `_is_auth_error`: a mensagem do OpenRouter para 402
+    diz "Insufficient credits", que casaria com o marcador "insufficient" e
+    faria o servidor culpar uma chave v��lida."""
+    lowered = (message or "").lower()
+    markers = [
+        "insufficient credits", "insufficient credit", "insufficient funds",
+        "insufficient quota", "payment required", "402",
+        "add credits", "buy credits", "credits exceeded", "no credits",
+        "cr��dito insuficiente", "credito insuficiente", "sem cr��dito", "sem credito",
+        "saldo insuficiente",
+    ]
+    return any(m in lowered for m in markers)
+
+
 def _is_auth_error(message: str) -> bool:
-    """Detecta erros de autentica��o/credencial do OpenRouter na mensagem de erro."""
+    """Detecta erros de autentica??o/credencial do OpenRouter na mensagem de erro."""
     lowered = (message or "").lower()
     markers = [
         "401", "unauthorized", "authentication", "invalid api key",
-        "invalid_api_key", "invalidapikey", "api key", "expired", "expirad", "insufficient",
+        "invalid_api_key", "invalidapikey", "api key", "expired", "expirad",
     ]
     return any(m in lowered for m in markers)
 

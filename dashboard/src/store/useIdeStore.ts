@@ -101,6 +101,14 @@ interface IdeStore {
 insertAgentMessage: (agentId: string, m: Omit<ChatMessage, "id" | "time" | "status">) => string;
     replaceThread: (agentId: string, msgs: ChatMessage[]) => void;
     patchMessage: (agentId: string, id: string, patch: Partial<ChatMessage>) => void;
+  /**
+   * Qual conversa do SERVIDOR está aberta para cada agente.
+   * Fica no store (e é persistida) em vez de um ref no hook: assim a
+   * continuidade da conversa sobrevive a F5 e o Histórico consegue reabrir
+   * uma conversa pelo mesmo caminho.
+   */
+  chatConversations: Record<string, string>;
+  setChatConversation: (agentId: string, conversationId: string) => void;
 
   // calendário / eventos
   events: CalendarEvent[];
@@ -297,6 +305,14 @@ export const useIdeStore = create<IdeStore>()(
       dismissNotif: (id) => set((s) => ({ notifications: s.notifications.filter((n) => n.id !== id) })),
 
       history: [],
+      chatConversations: {},
+      setChatConversation: (agentId, conversationId) =>
+        set((s) => {
+          const next = { ...s.chatConversations };
+          if (conversationId) next[agentId] = conversationId;
+          else delete next[agentId];
+          return { chatConversations: next };
+        }),
       addHistory: (h) => set((s) => ({ history: [{ ...h, id: uid("hist"), time: Date.now() }, ...s.history].slice(0, 300) })),
       deleteHistory: (id) => {
         set((s) => ({ history: s.history.filter((h) => h.id !== id) }));
@@ -328,6 +344,7 @@ export const useIdeStore = create<IdeStore>()(
           logs: [],
           notifications: [],
           history: [],
+          chatConversations: {},
         });
       },
     }),
@@ -343,6 +360,7 @@ export const useIdeStore = create<IdeStore>()(
         tasks: s.tasks,
         notifications: s.notifications,
         history: s.history,
+        chatConversations: s.chatConversations,
       }),
     },
   ),

@@ -1,6 +1,11 @@
 """
 Definição dos 10 principais modelos para integração via OpenRouter.
 Inclui slugs oficiais primários e fallbacks ativos para máxima resiliência.
+
+Os slugs foram conferidos contra o catálogo vivo de `/api/v1/models`.
+Slug morto não é inofensivo: o OpenRouter responde 400 "not a valid model ID"
+e esse erro passa a ser a ÚLTIMA mensagem da cadeia de fallback, mascarando
+a causa real (ex.: 402 sem crédito). `test_models_config.py` trava isso.
 """
 
 from dataclasses import dataclass, field
@@ -19,14 +24,14 @@ class ModelInfo:
 OPENROUTER_MODELS: List[ModelInfo] = [
     ModelInfo(
         id="claude-3.5-sonnet",
-        name="Claude 3.5 Sonnet",
+        name="Claude Sonnet",
         provider="Anthropic",
-        primary_slug="anthropic/claude-3.5-sonnet",
+        primary_slug="anthropic/claude-sonnet-4.6",
         fallback_slugs=[
-            "anthropic/claude-sonnet-4",
             "anthropic/claude-sonnet-4.5",
             "~anthropic/claude-sonnet-latest",
-            "anthropic/claude-3-haiku"
+            "anthropic/claude-sonnet-4",
+            "anthropic/claude-haiku-4.5"
         ],
         description="Modelo de ponta da Anthropic para raciocínio, visão e código."
     ),
@@ -48,11 +53,11 @@ OPENROUTER_MODELS: List[ModelInfo] = [
     ),
     ModelInfo(
         id="gemini-flash-1.5",
-        name="Gemini Flash 1.5",
+        name="Gemini Flash",
         provider="Google",
-        primary_slug="google/gemini-flash-1.5",
+        primary_slug="google/gemini-2.5-flash",
         fallback_slugs=[
-            "google/gemini-2.5-flash",
+            "google/gemini-2.5-flash-lite",
             "google/gemini-3.5-flash",
             "~google/gemini-flash-latest"
         ],
@@ -60,11 +65,11 @@ OPENROUTER_MODELS: List[ModelInfo] = [
     ),
     ModelInfo(
         id="gemini-pro-1.5",
-        name="Gemini Pro 1.5",
+        name="Gemini Pro",
         provider="Google",
-        primary_slug="google/gemini-pro-1.5",
+        primary_slug="google/gemini-2.5-pro",
         fallback_slugs=[
-            "google/gemini-2.5-pro",
+            "google/gemini-2.5-flash",
             "~google/gemini-pro-latest"
         ],
         description="Modelo avançado de raciocínio complexo e multimodal do Google."
@@ -81,10 +86,10 @@ OPENROUTER_MODELS: List[ModelInfo] = [
         id="llama-3.1-405b-instruct",
         name="Llama 3.1 405B Instruct",
         provider="Meta",
-        primary_slug="meta-llama/llama-3.1-405b-instruct",
+        primary_slug="meta-llama/llama-3.3-70b-instruct",
         fallback_slugs=[
-            "nousresearch/hermes-3-llama-3.1-405b",
-            "meta-llama/llama-3.3-70b-instruct"
+            "meta-llama/llama-3.1-70b-instruct",
+            "nousresearch/hermes-3-llama-3.1-405b"
         ],
         description="O maior e mais capaz modelo open-source da Meta (405B parâmetros)."
     ),
@@ -101,7 +106,10 @@ OPENROUTER_MODELS: List[ModelInfo] = [
         name="DeepSeek Chat / Coder",
         provider="DeepSeek",
         primary_slug="deepseek/deepseek-chat",
-        fallback_slugs=["deepseek/deepseek-coder"],
+        fallback_slugs=[
+            "deepseek/deepseek-chat-v3.1",
+            "qwen/qwen-2.5-coder-32b-instruct"
+        ],
         description="Modelo de alto desempenho e raciocínio técnico da DeepSeek."
     ),
     ModelInfo(

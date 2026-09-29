@@ -129,14 +129,18 @@ class TestMultiuserIsolation(unittest.TestCase):
             ns.AI_RATE_LIMITER = old_limiter
 
     def test_per_agent_ai_config(self):
-        """Modelo do chat: request explícito > defaultModel do agente > padrão da categoria."""
+        """Precedência de provider/modelo: request > override do agente > default.
+
+        O chat é multi-provedor: OpenRouter usa o cliente rico (tools/fallback) e
+        os demais usam o `AIProviderService`. O teste acompanha os DOIS caminhos
+        para não depender de um só — foi assim que `agent_overrides` passou
+        meses salvo na Central de IA sem o chat fazer nada com ele."""
         hA = self._register("Usuário Agente", "agtA")
 
-        # Salva settings (round-trip das configurações de IA por usuário)
         r = self.tc.post("/api/nemo/ai/config", json={
             "default_provider": "gemini",
-            "default_model": "gemini-2.5-flash",
-            "agent_overrides": {"nemo": {"provider": "groq", "model": "llama-3.3-70b-versatile"}},
+            "default_model": "gemini-flash-latest",
+            "agent_overrides": {"nemo": {"provider": "groq", "model": "qwen/qwen3.8-27b"}},
         }, headers=hA)
         self.assertEqual(r.status_code, 200, r.text)
 
@@ -146,23 +150,53 @@ class TestMultiuserIsolation(unittest.TestCase):
             calls.append(kwargs["model"])
             return _ok_result("openrouter", kwargs.get("model") or "openai/gpt-4o-mini")
 
+        # caminho OpenRouter
         client = _chat_client()
         client.chat_completion.side_effect = fake_chat
         with patch.object(ns, "get_client", return_value=client):
-            r = self.tc.post("/api/nemo/chat",
-                             json={"agent": "nemo", "message": "oi", "messages": []}, headers=hA)
+            r = self.tc.post("/api/nemo/chat", json={
+                "agent": "nemo", "message": "oi", "messages": [],
+                "provider": "openrouter",
+            }, headers=hA)
             self.assertEqual(r.status_code, 200, r.text)
-
             # request explícito TEM prioridade sobre o modelo do agente
+            r = self.tc.post("/api/nemo/chat", json={
+                "agent": "nemo", "message": "oi", "messages": [],
+                "provider": "openrouter", "model": "deepseek/deepseek-chat",
+            }, headers=hA)
+            self.assertEqual(r.status_code, 200, r.text)
+        expected_default = (ns._agent_persona("nemo") or {}).get("defaultModel") or ns.CATEGORY_MODEL_DEFAULT
+        self.assertEqual(calls[0], expected_default)
+        self.assertEqual(calls[1], "deepseek/deepseek-chat")
+
+        # caminho não-OpenRouter: o override do agente (Groq) tem de ser usado
+        svc_calls = []
+
+        def fake_complete(provider, model, messages, **kwargs):
+            svc_calls.append((provider, model))
+            return _ok_result(provider, model)
+
+        with patch.object(ns.AI_SERVICE, "complete", side_effect=fake_complete), \
+                patch.object(ns, "_provider_is_usable", return_value=True):
+            r = self.tc.post("/api/nemo/chat", json={
+                "agent": "nemo", "message": "oi", "messages": [],
+            }, headers=hA)
+            self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(svc_calls[0], ("groq", "qwen/qwen3.8-27b"),
+                         "override do agente precisa vencer o default do usuário")
+
+        # modelo de OpenRouter não é enviado cru para o Groq (senão: 404)
+        svc_calls.clear()
+        with patch.object(ns.AI_SERVICE, "complete", side_effect=fake_complete), \
+                patch.object(ns, "_provider_is_usable", return_value=True):
             r = self.tc.post("/api/nemo/chat", json={
                 "agent": "nemo", "message": "oi", "messages": [],
                 "model": "deepseek/deepseek-chat",
             }, headers=hA)
             self.assertEqual(r.status_code, 200, r.text)
-
-        expected_default = (ns._agent_persona("nemo") or {}).get("defaultModel") or ns.CATEGORY_MODEL_DEFAULT
-        self.assertEqual(calls[0], expected_default)
-        self.assertEqual(calls[1], "deepseek/deepseek-chat")
+        self.assertEqual(svc_calls[0][0], "groq")
+        self.assertIn(svc_calls[0][1], ns.PROVIDER_META["groq"]["models"],
+                      "modelo precisa ser traduzido para o catálogo do provedor")
 
         # remoção do override (as settings continuam gerenciáveis)
         r = self.tc.post("/api/nemo/ai/config", json={"agent_overrides": {"nemo": {}}}, headers=hA)
@@ -171,11 +205,16 @@ class TestMultiuserIsolation(unittest.TestCase):
         self.assertNotIn("nemo", (cfg["user"]["settings"].get("agent_overrides") or {}))
 
     def test_activity_logs_tokens(self):
-        """Actividade de chat grava tokens (§34) e é isolada por usuário."""
+        """Actividade de chat grava tokens (§34) e é isolada por usuário.
+
+        `provider` é fixado no request: sem isso o chat segue o `NEMO_AI_PROVIDER`
+        do ambiente e o teste passa a medir a API de verdade em vez do mock."""
         hA = self._register("Usuário Tokens", "tokA")
         hB = self._register("Outro Tokens", "tokB")
         with patch.object(ns, "get_client", return_value=_chat_client("openai/gpt-4o-mini")):
-            r = self.tc.post("/api/nemo/chat", json={"agent": "analista", "message": "oi", "messages": []}, headers=hA)
+            r = self.tc.post("/api/nemo/chat", json={
+                "agent": "analista", "message": "oi", "messages": [], "provider": "openrouter",
+            }, headers=hA)
         self.assertEqual(r.status_code, 200, r.text)
 
         actsA = self.tc.get("/api/nemo/ai/activity", headers=hA).json()["activity"]

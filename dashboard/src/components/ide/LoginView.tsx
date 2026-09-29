@@ -1,8 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useAuthStore } from "@/store/useAuthStore";
-import { AGENT_ROSTER } from "@/data/agents";
-import { AgentAvatar } from "@/components/AgentAvatar";
-import { BrandLogo } from "@/components/BrandLogo";
 import { BRAND } from "@/config/branding";
 
 type Mode = "login" | "register";
@@ -151,26 +148,22 @@ export function LoginView() {
 
   return (
     <div className="auth-wrap">
-      <div className="auth-bg" aria-hidden />
+      {/* A logo é o AMBIENTE da página (§18/§19): fica atrás de tudo, como
+          marca d'águaampla e desfocada — não como foto colada no card. */}
+      <div className="auth-bg" aria-hidden>
+        <div className="auth-bg-mark" />
+        <div className="auth-bg-glow" />
+        <div className="auth-bg-grid" />
+        <div className="auth-bg-vignette" />
+      </div>
 
       <div className="auth-card">
         <div className="auth-brand">
-          <div className="auth-logo">
-            <BrandLogo size="lg" priority />
-          </div>
-          <div className="auth-brandname">{BRAND.name}</div>
-          <div className="auth-brandsub">{BRAND.slogan}</div>
+          {/* Só o MARCA (ícone). O nome SYNOP aparece uma única vez, abaixo. */}
+          <img className="auth-mark" src={BRAND.assets.icon192} alt="" width={44} height={44} />
+          <h1 className="auth-brandname">{BRAND.name}</h1>
+          <p className="auth-brandsub">{BRAND.slogan}</p>
         </div>
-
-        <div className="auth-agent-strip">
-          {AGENT_ROSTER.slice(0, 8).map((a) => (
-            <div className="auth-agent" key={a.id} title={a.name}>
-              <AgentAvatar id={a.id} accent={a.color} size={30} badge={a.icon} shape="round" />
-            </div>
-          ))}
-        </div>
-
-        <div className="auth-sep" />
 
         <form className="auth-form" onSubmit={submit}>
           {mode === "register" && (

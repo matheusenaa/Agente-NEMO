@@ -60,14 +60,19 @@ export type ChatResponse =
       ok: true;
       agent: string;
       content: string;
+      conversation_id?: string;
       model_used: string;
       is_fallback?: boolean;
       offline?: boolean;
+      rate_limited?: boolean;
       latency_ms?: number;
       prompt_tokens?: number;
       completion_tokens?: number;
       total_tokens?: number;
       finish_reason?: string | null;
+      used_search?: boolean;
+      search_provider?: string;
+      search_results?: { title?: string; url?: string; snippet?: string; source?: string }[];
     }
   | {
       ok: false;
@@ -81,11 +86,138 @@ export type ChatResponse =
       latency_ms?: number;
     };
 
+export interface ChatStreamHandlers {
+  /** Texto recém-chegado do modelo (acrescentar ao que já está na tela). */
+  onDelta?: (text: string) => void;
+  /** O modelo caiu e vamos tentar outro: descartar o texto parcial. */
+  onReset?: (info: { model?: string }) => void;
+  /** Mensagem de status (ex.: "Consultando a web..."). */
+  onStatus?: (info: { stage?: string; message?: string }) => void;
+  /** Fontes da busca executada pelo agente. */
+  onSources?: (info: { provider?: string; results?: { title?: string; url?: string; snippet?: string }[] }) => void;
+  onError?: (error: { content?: string; error_code?: string; fallback_to_sync?: boolean }) => void;
+  onDone?: (info: { ok: boolean; conversation_id?: string; model_used?: string; used_search?: boolean }) => void;
+}
+
+/**
+ * Chat com streaming via SSE (POST + fetch reader).
+ *
+ * `EventSource` não serve aqui: ele só faz GET, e o chat precisa de corpo
+ * JSON com o histórico e a conversa em andamento. Por isso lemos o
+ * `text/event-stream` manualmente.
+ */
+async function chatStream(
+  body: Record<string, unknown>,
+  handlers: ChatStreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const token = getToken();
+  const headers = new Headers({ "Content-Type": "application/json", Accept: "text/event-stream" });
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  const res = await fetch(`${BASE}/chat/stream`, {
+    method: "POST",
+    headers,
+    credentials: "include",
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!res.ok || !res.body) {
+    const raw = await res.text().catch(() => "");
+    let detail = raw;
+    try {
+      const parsed = JSON.parse(raw) as { detail?: unknown };
+      detail = String(parsed.detail ?? raw);
+    } catch {
+      detail = raw;
+    }
+    throw new Error(detail || `HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // Eventos SSE são separados por uma linha em branco.
+    let idx = buffer.indexOf("\n\n");
+    while (idx !== -1) {
+      const raw = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+
+      let name = "";
+      const dataLines: string[] = [];
+      for (const line of raw.split("\n")) {
+        if (line.startsWith("event:")) name = line.slice(6).trim();
+        else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+      }
+      if (name && dataLines.length) {
+        let payload: Record<string, unknown> = {};
+        try {
+          payload = JSON.parse(dataLines.join("\n")) as Record<string, unknown>;
+        } catch {
+          payload = {};
+        }
+        switch (name) {
+          case "delta":
+            handlers.onDelta?.(String(payload.text ?? ""));
+            break;
+          case "reset":
+            handlers.onReset?.({ model: payload.model as string | undefined });
+            break;
+          case "status":
+            handlers.onStatus?.({ stage: payload.stage as string, message: payload.message as string });
+            break;
+          case "tool":
+            handlers.onStatus?.({ stage: "searching", message: `Consultando: ${String(payload.query ?? "")}` });
+            break;
+          case "sources":
+            handlers.onSources?.({
+              provider: payload.provider as string,
+              results: (payload.results ?? []) as { title?: string; url?: string; snippet?: string }[],
+            });
+            break;
+  case "error":
+    handlers.onError?.({
+      content: payload.content as string | undefined,
+      error_code: payload.error_code as string | undefined,
+      fallback_to_sync: payload.fallback_to_sync as boolean | undefined,
+    });
+    break;
+          case "done":
+            handlers.onDone?.({
+              ok: Boolean(payload.ok),
+              conversation_id: payload.conversation_id as string | undefined,
+              model_used: payload.model_used as string | undefined,
+              used_search: Boolean(payload.used_search),
+            });
+            break;
+          default:
+            break;
+        }
+      }
+      idx = buffer.indexOf("\n\n");
+    }
+  }
+}
+
 export const nemoApi = {
   async health(): Promise<ServerHealth> {
     return request<ServerHealth>("/health");
   },
-  async chat(agent: string, message: string, history: ChatHistoryMessage[] = [], model?: string): Promise<ChatResponse> {
+  async chat(
+    agent: string,
+    message: string,
+    history: ChatHistoryMessage[] = [],
+    model?: string,
+    conversationId?: string,
+    newConversation = false,
+  ): Promise<ChatResponse> {
     return request<ChatResponse>("/chat", {
       method: "POST",
       body: JSON.stringify({
@@ -93,12 +225,40 @@ export const nemoApi = {
         message,
         model,
         max_tokens: 1100,
+        conversation_id: conversationId ?? "",
+        new_conversation: newConversation,
         messages: history
           .filter((item) => item.content.trim().length > 0)
           .slice(-12)
           .map((item) => ({ role: item.role, content: item.content.slice(0, 12000) })),
       }),
     });
+  },
+
+  /** Chat com streaming progressivo (SSE). */
+  async chatStream(
+    agent: string,
+    message: string,
+    history: ChatHistoryMessage[] = [],
+    options: { model?: string; conversationId?: string; newConversation?: boolean; signal?: AbortSignal } = {},
+    handlers: ChatStreamHandlers = {},
+  ): Promise<void> {
+    await chatStream(
+      {
+        agent,
+        message,
+        model: options.model,
+        max_tokens: 1100,
+        conversation_id: options.conversationId ?? "",
+        new_conversation: options.newConversation ?? false,
+        messages: history
+          .filter((item) => item.content.trim().length > 0)
+          .slice(-12)
+          .map((item) => ({ role: item.role, content: item.content.slice(0, 12000) })),
+      },
+      handlers,
+      options.signal,
+    );
   },
   async listFiles(path = ""): Promise<{ path: string; entries: FileNode[] }> {
     return request(`/files?path=${encodeURIComponent(path)}`);

@@ -24,7 +24,12 @@ export interface AgentCard {
   avatar?: string;
 }
 
-export type MsgStatus = "sending" | "typing" | "done" | "error";
+/**
+ * `streaming` = o texto está chegando token a token pelo SSE e ainda pode
+ * crescer. Antes só havia `typing`/`sending`, que não diferenciavam
+ * "pensando" de "já escrevendo".
+ */
+export type MsgStatus = "sending" | "typing" | "streaming" | "done" | "error";
 
 export interface CalendarEvent {
   id: string;
@@ -53,6 +58,8 @@ export interface ChatMessage {
     isFallback?: boolean;
     promptTokens?: number;
     completionTokens?: number;
+    usedSearch?: boolean;
+    searchProvider?: string;
   };
   error?: string;
 }
