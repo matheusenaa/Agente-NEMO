@@ -62,37 +62,49 @@ export const authApi = {
 
 const ADMIN_BASE = "/api/admin";
 
+/**
+ * Painel administrativo. A sessão vive em cookie HttpOnly (`nemo_session`), então
+ * as chamadas usam `credentials: "include"` — o `Authorization: Bearer` era o
+ * único mecanismo enviado e nunca existia, o que tornava toda a área admin
+ * inutilizável. O parâmetro `token` continua opcional para clientes não-browser.
+ */
 export const adminApi = {
-  async users(token: string): Promise<{ ok: boolean; users: AuthUser[] }> {
-    const res = await fetch(`${ADMIN_BASE}/users`, { headers: { Authorization: `Bearer ${token}` } });
+  async users(token?: string): Promise<{ ok: boolean; users: AuthUser[] }> {
+    const res = await fetch(`${ADMIN_BASE}/users`, {
+      credentials: "include",
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
     const body = await res.json().catch(() => null);
     if (!res.ok) throw new Error((body?.detail as string) || `HTTP ${res.status}`);
     return body;
   },
-  async createUser(token: string, data: { name: string; email: string; password: string; role?: string }): Promise<{ ok: boolean; user: AuthUser }> {
+  async createUser(data: { name: string; email: string; password: string; role?: string }, token?: string): Promise<{ ok: boolean; user: AuthUser }> {
     const res = await fetch(`${ADMIN_BASE}/users`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      credentials: "include",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify(data),
     });
     const body = await res.json().catch(() => null);
     if (!res.ok) throw new Error((body?.detail as string) || `HTTP ${res.status}`);
     return body;
   },
-  async setRole(token: string, userId: string, role: string): Promise<{ ok: boolean; user: AuthUser }> {
+  async setRole(userId: string, role: string, token?: string): Promise<{ ok: boolean; user: AuthUser }> {
     const res = await fetch(`${ADMIN_BASE}/users/role`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      credentials: "include",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ userId, role }),
     });
     const body = await res.json().catch(() => null);
     if (!res.ok) throw new Error((body?.detail as string) || `HTTP ${res.status}`);
     return body;
   },
-  async resetPassword(token: string, userId: string, password: string): Promise<{ ok: boolean }> {
+  async resetPassword(userId: string, password: string, token?: string): Promise<{ ok: boolean; user: AuthUser }> {
     const res = await fetch(`${ADMIN_BASE}/users/${encodeURIComponent(userId)}/password`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      credentials: "include",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ password }),
     });
     const body = await res.json().catch(() => null);

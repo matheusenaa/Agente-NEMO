@@ -6,6 +6,7 @@ import type {
 } from "@/types/idea";
 import { getAgent } from "@/data/agents";
 import { FUNNY_PHRASES, pickPhrase } from "@/data/statusPhrases";
+import { nemoApi } from "@/api/nemo";
 
 const AMBIENT_INTERVAL_MS = 10 * 60 * 1000;
 const INITIAL_AMBIENT_PHRASE = pickPhrase(FUNNY_PHRASES, "");
@@ -101,6 +102,14 @@ interface IdeStore {
 insertAgentMessage: (agentId: string, m: Omit<ChatMessage, "id" | "time" | "status">) => string;
     replaceThread: (agentId: string, msgs: ChatMessage[]) => void;
     patchMessage: (agentId: string, id: string, patch: Partial<ChatMessage>) => void;
+
+  /**
+   * conversation_id do servidor por agente. Sem isso o chat não sabia onde
+   * gravar: cada turno era anexado à conversa mais recente do backend e a
+   * conversa aberta na tela podia ficar vazia depois do refresh (§3/§4/§11).
+   */
+  conversationIds: Record<string, string>;
+  setConversationId: (agentId: string, conversationId: string | null) => void;
 
   // calendário / eventos
   events: CalendarEvent[];
@@ -222,6 +231,15 @@ export const useIdeStore = create<IdeStore>()(
           },
         })),
 
+      conversationIds: {},
+      setConversationId: (agentId, conversationId) =>
+        set((s) => {
+          const next = { ...s.conversationIds };
+          if (conversationId) next[agentId] = conversationId;
+          else delete next[agentId];
+          return { conversationIds: next };
+        }),
+
       events: [],
       setEvents: (events) => set({ events }),
       addEvent: (e) => {
@@ -280,10 +298,46 @@ export const useIdeStore = create<IdeStore>()(
         const task: TaskItem = { id, title: t.title, priority: t.priority ?? "normal", agentId: t.agentId ?? "nemo", status: t.status ?? "pending", createdAt: Date.now() };
         set((s) => ({ tasks: [task, ...s.tasks] }));
         get().addLog({ tone: "info", text: `Nova tarefa: ${t.title}` });
+        // Antes a tarefa vivia só no localStorage do navegador: outro
+        // dispositivo não a via e ela sumia com o cache. Erro não é fatal para
+        // a UI, mas precisa aparecer no log em vez de sumir em catch vazio.
+        void nemoApi
+          .saveTask({
+            id: task.id,
+            title: task.title,
+            priority: task.priority,
+            agent_id: task.agentId,
+            status: task.status,
+            created_at: task.createdAt,
+          })
+          .catch((error) => {
+            useIdeStore.getState().addLog({
+              tone: "warn",
+              text: `Tarefa "${task.title}" só foi salva localmente: ${error instanceof Error ? error.message : String(error)}`,
+            });
+          });
         return id;
       },
-      updateTask: (id, patch) =>
-        set((s) => ({ tasks: s.tasks.map((t) => (t.id === id ? { ...t, ...patch, doneAt: patch.status === "done" ? Date.now() : t.doneAt } : t)) })),
+      updateTask: (id, patch) => {
+        set((s) => ({ tasks: s.tasks.map((t) => (t.id === id ? { ...t, ...patch, doneAt: patch.status === "done" ? Date.now() : t.doneAt } : t)) }));
+        const updated = get().tasks.find((t) => t.id === id);
+        if (!updated) return;
+        void nemoApi
+          .saveTask({
+            id: updated.id,
+            title: updated.title,
+            priority: updated.priority,
+            agent_id: updated.agentId,
+            status: updated.status,
+            created_at: updated.createdAt,
+          })
+          .catch((error) => {
+            useIdeStore.getState().addLog({
+              tone: "warn",
+              text: `Atualização da tarefa "${updated.title}" não foi salva no servidor: ${error instanceof Error ? error.message : String(error)}`,
+            });
+          });
+      },
 
       logs: [],
       addLog: (t) =>
@@ -318,6 +372,7 @@ export const useIdeStore = create<IdeStore>()(
           ambientPhrase: pickPhrase(FUNNY_PHRASES, ""),
           ambientPhraseAt: Date.now(),
           threads: initialThreads(),
+          conversationIds: {},
           events: [],
           workspacePath: "",
           openFiles: [],
@@ -339,6 +394,7 @@ export const useIdeStore = create<IdeStore>()(
         config: s.config,
         activeAgentId: s.activeAgentId,
         threads: s.threads,
+        conversationIds: s.conversationIds,
         events: s.events,
         tasks: s.tasks,
         notifications: s.notifications,

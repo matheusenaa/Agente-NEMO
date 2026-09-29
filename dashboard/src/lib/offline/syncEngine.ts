@@ -1,5 +1,7 @@
 import { nemoApi } from "@/api/nemo";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
+import { useCallback, useEffect, useState } from "react";
+import { useOffline } from "@/lib/offline";
 
 interface SyncResult {
   success: number;
@@ -85,10 +87,17 @@ class SyncEngine {
       try {
         const pushResult = await nemoApi.syncPush(pending, this.lastSyncVersion);
         
+      // O servidor devolve os resultados na MESMA ordem das operações, mas
+        // casa por `client_id`: indexar por posição marcava a operação errada
+        // como sincronizada quando o servidor reordenava ou omitia alguma.
+        const resultsByClient = new Map(
+          (pushResult.results ?? []).map((r) => [r.client_id, r] as const),
+        );
+
         for (let i = 0; i < pending.length; i++) {
           const item = pending[i];
-          const pushItemResult = pushResult.results[i];
-          
+          const pushItemResult = resultsByClient.get(item.client_id) ?? pushResult.results?.[i];
+
           if (pushItemResult?.status === "ok") {
             await markSynced(item.id);
             result.success++;
@@ -113,17 +122,32 @@ class SyncEngine {
 
     try {
       const pullResult = await nemoApi.syncPull(this.lastSyncVersion);
-      
+
       if (pullResult.changes) {
         for (const [store, items] of Object.entries(pullResult.changes)) {
           for (const item of items) {
-            await this.applyServerChange(store, item);
+            try {
+              await this.applyServerChange(store, item);
+            } catch (error) {
+              // Antes o `catch {}` vazio em applyServerChange escondia falha de
+              // escrita: o cliente recebia "sincronizado" com o dado perdido.
+              result.failed++;
+              result.errors.push(
+                `apply ${store} falhou: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
           }
         }
-        
-        if (pullResult.server_version) {
-          this.lastSyncVersion = pullResult.server_version;
-        }
+      }
+
+      if (pullResult.unreadable_stores?.length) {
+        // O servidor não conseguiu ler estas lojas. O cursor NÃO pode avançar:
+        // doingo isso, a próxima sincronização pularia esses registros para
+        // sempre. Fica no valor anterior e a próxima tentativa reprocessa.
+        result.failed += pullResult.unreadable_stores.length;
+        result.errors.push(`Lojas ilegíveis no servidor: ${pullResult.unreadable_stores.join(", ")}`);
+      } else if (pullResult.server_version) {
+        this.lastSyncVersion = pullResult.server_version;
       }
     } catch (error) {
       result.errors.push(`Pull failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -139,21 +163,34 @@ class SyncEngine {
   private async applyServerChange(store: string, item: any): Promise<void> {
     const { getRepository } = await import("./repository");
     const repo = getRepository();
-    
-    try {
-      if (store === "conversations") {
+
+    switch (store) {
+      case "conversations":
         await repo.updateConversation(item.id, item);
-      } else if (store === "memories") {
-      } else if (store === "tasks") {
+        break;
+      case "tasks":
         await repo.saveTask(item);
-      } else if (store === "events") {
+        break;
+      case "events":
         await repo.saveEvent(item);
-      } else if (store === "profile") {
+        break;
+      case "profile":
         await repo.saveProfile(item);
-      } else if (store === "ai_settings") {
+        break;
+      case "ai_settings":
         await repo.saveAiSettings(item);
-      }
-    } catch {
+        break;
+      case "memories":
+        // Era um caso vazio: a memória alterada em outro dispositivo nunca
+        // era gravada localmente. `saveMemory` recria com novo id, então a
+        // remoção do id antigo é o que mantém a lista sem duplicatas.
+        await repo.deleteMemory(item.id);
+        await repo.saveMemory(item.agent_id || "nemo", item.content || "", item.kind || "obs");
+        break;
+      default:
+        // `ai_keys`, `messages`, `activity_logs` e `web_searches` não têm
+        // escrita local: são somente leitura/registro no servidor.
+        break;
     }
   }
 
@@ -213,6 +250,3 @@ export function useSyncEngine() {
 
   return { syncStatus, lastResult, manualSync, isSyncing: syncEngine.getStatus() === "syncing" };
 }
-
-import { useState, useEffect, useCallback } from "react";
-import { useOffline } from "@/lib/offline";

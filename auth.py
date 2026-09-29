@@ -64,7 +64,7 @@ def _atomic_write(path: Path, content: str) -> None:
                 os.fsync(handle.fileno())
             except OSError:
                 pass
-        os.replace(temporary_path, path)
+        _replace_with_retry(temporary_path, path)
         try:
             os.chmod(path, 0o600)
         except OSError:
@@ -75,6 +75,28 @@ def _atomic_write(path: Path, content: str) -> None:
                 temporary_path.unlink()
             except OSError:
                 pass
+
+
+def _replace_with_retry(source: Path, destination: Path, attempts: int = 6) -> None:
+    """`os.replace` com retry para travamento transitório no Windows.
+
+    No Windows, `os.replace` falha com `PermissionError [WinError 5]` quando
+    qualquer processo tem o destino aberto sem `FILE_SHARE_DELETE` — o que
+    acontece com o antivírus, o indexador de busca e o próprio backend rodando
+    (que relê `users.json` a cada requisição). Uma falha única derrubava o
+    cadastro de usuário; agora há espera exponencial curta antes de desistir.
+    """
+    last_error: Optional[BaseException] = None
+    for attempt in range(attempts):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError as exc:
+            last_error = exc
+            if attempt == attempts - 1:
+                break
+            time.sleep(0.05 * (2 ** attempt))
+    raise last_error if last_error else OSError(f"Falha ao substituir {destination}")
 
 
 def _normalize_oauth_accounts(record: Dict[str, Any]) -> Dict[str, str]:
@@ -259,10 +281,16 @@ class AuthStore:
             if user_id not in self._users:
                 raise AuthError("Usuário não encontrado.", 401)
             token = secrets.token_urlsafe(32)
+            # poda as sessões expiradas: sem isso sessions.json cresce sem limite
+            # e usuários excluados mantêm tokens válidos até o próximo restart.
+            now = time.time()
+            expired = [k for k, v in self.sessions.items() if v.get("expires_at", 0) <= now]
+            for key in expired:
+                self.sessions.pop(key, None)
             self.sessions[self._token_key(token)] = {
                 "user_id": user_id,
-                "created_at": time.time(),
-                "expires_at": time.time() + (SESSION_TTL_SECONDS if remember else SHORT_SESSION_TTL_SECONDS),
+                "created_at": now,
+                "expires_at": now + (SESSION_TTL_SECONDS if remember else SHORT_SESSION_TTL_SECONDS),
             }
             self._save_sessions()
             return token
@@ -389,6 +417,7 @@ class AuthStore:
                     raise AuthError("Há contas duplicadas para este e-mail. Fale com o administrador.", 409)
             if not user or not self._verify_password(password or "", user.get("password_hash", "")):
                 raise AuthError("E-mail ou senha incorretos.", 401)
+            self._maybe_promote(user)
             return self._public_user(user), self._issue_token(user["id"], remember)
 
     @staticmethod
@@ -491,10 +520,21 @@ class AuthStore:
 
     def reset_password(self, user_id: str, password: str) -> Optional[Dict[str, Any]]:
         user = self._users.get(user_id)
-        if not user or not password or len(password) < 6:
-            raise AuthError("A senha deve ter pelo menos 6 caracteres.", 400)
+        # Mesma régua do cadastro (8 caracteres): senão o admin podia definir uma
+        # senha que o próprio usuário não conseguiria cadastrar.
+        if not user or not password or len(password) < 8:
+            raise AuthError("A senha deve ter pelo menos 8 caracteres.", 400)
         user["password_hash"] = self._hash_password(password)
         self._save()
+        # Trocar a senha invalida as sessões ativas (senão um token vazado
+        # continua valendo depois da redefinição).
+        revoked = 0
+        for key, session in list(self.sessions.items()):
+            if session.get("user_id") == user_id:
+                self.sessions.pop(key, None)
+                revoked += 1
+        if revoked:
+            self._save_sessions()
         return {k: v for k, v in user.items() if k != "password_hash"}
 
     def delete_user(self, user_id: str) -> bool:
@@ -503,20 +543,45 @@ class AuthStore:
             return False
         del self._users[user_id]
         self._save()
+        revoked = 0
         for token, sess in list(self.sessions.items()):
             if sess.get("user_id") == user_id:
                 self.sessions.pop(token, None)
+                revoked += 1
+        # Antes as sessões eram removidas da memória e NUNCA gravadas no disco:
+        # a conta excluída voltava autenticada no próximo restart do servidor.
+        if revoked:
+            self._save_sessions()
         return True
 
-    def admin_count(self) -> int:
-        return sum(1 for u in self._users.values() if u.get("role") == "admin")
+    def _auto_admin_emails(self) -> set:
+        """E-mails que recebem role 'admin' automaticamente (§30).
+
+        `ADMIN_EMAIL` é o administrador fixo do SYNOP. `NEMO_ADMIN_EMAIL` é um
+        override explícito configurado pelo operador (ex.: painel do Render) —
+        nunca um valor derivado do cadastro do usuário.
+        """
+        emails = {normalize_email(ADMIN_EMAIL)}
+        if ADMIN_BOOTSTRAP_EMAIL:
+            emails.add(normalize_email(ADMIN_BOOTSTRAP_EMAIL))
+        return emails
 
     def _maybe_promote(self, user: Dict[str, Any]) -> None:
-        """Bootstrap: NEMO_ADMIN_EMAIL registrado/logado vira admin automaticamente."""
-        if ADMIN_BOOTSTRAP_EMAIL and user.get("email") and user["email"].lower() == ADMIN_BOOTSTRAP_EMAIL:
-            if user.get("role") != "admin":
-                user["role"] = "admin"
-                self._save()
+        """Garante role 'admin' para a conta administrativa do SYNOP.
+
+        Aplicado em login/OAuth (nunca no cadastro), para não roubar a rota
+        explícita `POST /api/auth/bootstrap` — que continua sendo a forma
+        documentada de criar o primeiro admin.
+        """
+        if not user.get("email"):
+            return
+        if normalize_email(user["email"]) not in self._auto_admin_emails():
+            return
+        if user.get("role") == "admin":
+            return
+        with self._lock:
+            user["role"] = "admin"
+            self._save()
 
     def user_dir(self, user_id: str) -> Path:
         """Diretório de dados do usuário (área privada)."""
@@ -581,6 +646,7 @@ class AuthStore:
                 changed = True
             if changed:
                 self._save()
+            self._maybe_promote(user)
             return self._public_user(user), self._issue_token(user["id"])
 
 

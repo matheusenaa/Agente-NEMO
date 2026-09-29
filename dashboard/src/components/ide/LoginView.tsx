@@ -156,7 +156,9 @@ export function LoginView() {
       <div className="auth-card">
         <div className="auth-brand">
           <div className="auth-logo">
-            <BrandLogo size="lg" priority />
+            {/* `alt` vazio: o nome da marca aparece logo abaixo em texto real.
+                Com alt preenchido, o leitor de tela anunciava "SYNOP" duas vezes. */}
+            <BrandLogo size="lg" alt="" priority />
           </div>
           <div className="auth-brandname">{BRAND.name}</div>
           <div className="auth-brandsub">{BRAND.slogan}</div>

@@ -4,15 +4,44 @@ import type {
 
 const BASE = "/api/nemo";
 
-function getToken(): string {
+/**
+ * Token Bearer fica APENAS em memória, para clientes não-browser (shell
+ * desktop / testes). No navegador a sessão é o cookie HttpOnly `nemo_session`.
+ *
+ * Antes o token era lido de `localStorage["nemo-auth"]`, mas o store nunca o
+ * persistia (a chave `token` era removida no `partialize`): a leitura devolvia
+ * sempre `""` e o cabeçalho Authorization nunca era enviado.
+ */
+let bearerToken = "";
+
+export function setBearerToken(token: string): void {
+  bearerToken = (token || "").trim();
+}
+
+export function getBearerToken(): string {
+  return bearerToken;
+}
+
+/** Extrai uma mensagem legível do corpo de erro do backend. */
+export function extractApiError(body: string, status: number): string {
   try {
-    const raw = localStorage.getItem("nemo-auth");
-    if (!raw) return "";
-    const parsed = JSON.parse(raw);
-    return parsed?.state?.token ?? parsed?.token ?? "";
+    const parsed = JSON.parse(body);
+    const detail = parsed?.detail;
+    if (typeof detail === "string" && detail) return detail;
+    if (Array.isArray(detail) && detail.length) {
+      const first = detail[0];
+      if (typeof first === "string") return first;
+      if (first?.msg) return `${(first.loc || []).slice(1).join(".")}: ${first.msg}`;
+    }
+    if (parsed?.error) return String(parsed.error);
   } catch {
-    return "";
+    /* corpo não-JSON */
   }
+  return body?.trim() || `HTTP ${status}`;
+}
+
+function getToken(): string {
+  return bearerToken;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -68,6 +97,8 @@ export type ChatResponse =
       completion_tokens?: number;
       total_tokens?: number;
       finish_reason?: string | null;
+      conversation_id?: string;
+      search?: { used: boolean; ok?: boolean; provider?: string; query?: string; results?: number; error?: string };
     }
   | {
       ok: false;
@@ -79,13 +110,15 @@ export type ChatResponse =
       is_fallback?: boolean;
       offline?: boolean;
       latency_ms?: number;
+      conversation_id?: string;
+      search?: { used: boolean; ok?: boolean; provider?: string; query?: string; results?: number; error?: string };
     };
 
 export const nemoApi = {
   async health(): Promise<ServerHealth> {
     return request<ServerHealth>("/health");
   },
-  async chat(agent: string, message: string, history: ChatHistoryMessage[] = [], model?: string): Promise<ChatResponse> {
+  async chat(agent: string, message: string, history: ChatHistoryMessage[] = [], model?: string, conversationId?: string): Promise<ChatResponse> {
     return request<ChatResponse>("/chat", {
       method: "POST",
       body: JSON.stringify({
@@ -93,12 +126,19 @@ export const nemoApi = {
         message,
         model,
         max_tokens: 1100,
+        // Sem isto o backend não sabia em qual conversa gravar: cada resposta
+        // ia para a conversa mais recente do agente, e a conversa aberta na
+        // tela podia ficar vazia depois do refresh (§3/§4/§11).
+        ...(conversationId ? { conversation_id: conversationId } : {}),
         messages: history
           .filter((item) => item.content.trim().length > 0)
           .slice(-12)
           .map((item) => ({ role: item.role, content: item.content.slice(0, 12000) })),
       }),
     });
+  },
+  async createConversation(agent: string, title: string): Promise<{ ok: boolean; conversation: AiConversation }> {
+    return request("/conversations", { method: "POST", body: JSON.stringify({ agent_id: agent, title }) });
   },
   async listFiles(path = ""): Promise<{ path: string; entries: FileNode[] }> {
     return request(`/files?path=${encodeURIComponent(path)}`);
@@ -161,6 +201,7 @@ export const nemoApi = {
   },
   async searchWeb(query: string, limit = 6, agent = "pesquisador"): Promise<{
     ok: boolean; query: string; provider: string; results: SearchWebResult[]; error?: string;
+    provider_errors?: Record<string, string>;
   }> {
     return request(`/ai/search?query=${encodeURIComponent(query)}&limit=${limit}&agent=${encodeURIComponent(agent)}`);
   },
@@ -244,6 +285,8 @@ export interface SyncPullResponse {
   ok: boolean;
   changes: Record<string, any[]>;
   server_version: number;
+  /** Lojas que o servidor não conseguiu ler — o cursor não deve avançar. */
+  unreadable_stores?: string[];
 }
 
 export interface SyncConflict {

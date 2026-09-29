@@ -26,6 +26,8 @@
   --brand-grad: linear-gradient(120deg, #00b4ff, #00e0c6);
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
   --paper: #0d111a;
+  /* Marca em plano de fundo da tela de login (asset oficial, servida em /public) */
+  --brand-logo: url("/assets/branding/synop-logo.webp");
 }
 
 body[data-theme="vasco"] {

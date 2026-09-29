@@ -28,6 +28,16 @@ export function EventModal({ event, defaultDate, onClose }: EventModalProps) {
   const updateEvent = useIdeStore((s) => s.updateEvent);
   const deleteEvent = useIdeStore((s) => s.deleteEvent);
   const notify = useIdeStore((s) => s.notify);
+  const addLog = useIdeStore((s) => s.addLog);
+
+  // Antes as três chamadas usavam `.catch(() => undefined)`: o evento aparecia
+  // na tela como salvo, mas se perdia ao recarregar porque o servidor nunca o
+  // recebeu. A falha agora é avisada no log e na notificação.
+  const reportSyncFailure = (action: string, error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    addLog({ tone: "error", text: `Falha ao ${action} no servidor: ${message}` });
+    notify({ icon: "⚠️", text: `Não consegui ${action} no servidor.`, tone: "error" });
+  };
 
   const today = new Date();
   const [title, setTitle] = useState(event?.title ?? "");
@@ -47,11 +57,11 @@ export function EventModal({ event, defaultDate, onClose }: EventModalProps) {
     const payload = { title: title.trim(), description: description.trim(), date, time, durationMin: Number(duration) || 60, category, agentId, remind: Number(remind) || 0 };
     if (event) {
       updateEvent(event.id, payload);
-      nemoApi.updateEvent(event.id, payload).catch(() => undefined);
+      nemoApi.updateEvent(event.id, payload).catch((error) => reportSyncFailure("atualizar o evento", error));
       notify({ icon: "📅", text: `Evento atualizado: ${payload.title}`, tone: "ok" });
     } else {
       const id = addEvent(payload);
-      nemoApi.createEvent({ ...payload, id }).catch(() => undefined);
+      nemoApi.createEvent({ ...payload, id }).catch((error) => reportSyncFailure("criar o evento", error));
       notify({ icon: "📅", text: `Evento criado: ${payload.title}`, tone: "ok" });
     }
     onClose();
@@ -61,7 +71,7 @@ export function EventModal({ event, defaultDate, onClose }: EventModalProps) {
     if (!event) return;
     if (!window.confirm(`Excluir o evento "${event.title}"?`)) return;
     deleteEvent(event.id);
-    nemoApi.deleteEvent(event.id).catch(() => undefined);
+    nemoApi.deleteEvent(event.id).catch((error) => reportSyncFailure("excluir o evento", error));
     notify({ icon: "🗑️", text: `Evento excluído: ${event.title}`, tone: "info" });
     onClose();
   };

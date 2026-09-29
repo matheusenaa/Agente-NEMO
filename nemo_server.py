@@ -49,6 +49,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
@@ -60,7 +61,7 @@ import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 # Garante que a raiz do projeto esteja no sys.path independente do ambiente
 def _get_project_root() -> Path:
@@ -109,6 +110,52 @@ from data_store import make_data_store
 
 VERSION = "1.0.0"
 PROJECT_NAME = "NEMO IDE"
+
+# ---------------------------------------------------------------------------
+# Logs (§32): cobre as camadas de login, API, dados, IA, OpenRouter, busca e
+# sincronização. NUNCA registra senha, API key, token ou conteúdo de sessão —
+# `_redact` é aplicado nos campos antes de qualquer escrita.
+# ---------------------------------------------------------------------------
+
+_REDACT_KEYS = {
+    "password", "senha", "password_hash", "api_key", "apikey", "token",
+    "authorization", "cookie", "secret", "encrypted", "encrypted_key",
+    "openrouter_api_key", "gemini_api_key", "groq_api_key", "access_token",
+    "refresh_token", "client_secret",
+}
+
+
+def _redact(value: Any, key: str = "") -> Any:
+    """Substitui segredos por '***' antes de qualquer log."""
+    if key.lower() in _REDACT_KEYS:
+        return "***"
+    if isinstance(value, dict):
+        return {k: _redact(v, str(k)) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redact(v, key) for v in value]
+    if isinstance(value, str) and len(value) > 24 and ("sk-" in value or "eyJ" in value):
+        return value[:8] + "…" + value[-4:]
+    return value
+
+
+def _init_logger() -> logging.Logger:
+    log = logging.getLogger("synop")
+    if log.handlers:
+        return log
+    level = os.getenv("SYNOP_LOG_LEVEL", "INFO").upper()
+    log.setLevel(getattr(logging, level, logging.INFO))
+    fmt = logging.Formatter(
+        fmt="%(asctime)s %(levelname)-7s [%(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    stream = logging.StreamHandler(sys.stderr)
+    stream.setFormatter(fmt)
+    log.addHandler(stream)
+    log.propagate = False
+    return log
+
+
+logger = _init_logger()
 
 AGENTS_DIR = ROOT / "agents"
 SQUADS_DIR = ROOT / "squads"
@@ -268,11 +315,92 @@ def _search_block(sres: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _search_unavailable_block(sres: Dict[str, Any]) -> str:
+    """Instrução para quando a busca na web falhou (missão §9/§39).
+
+    O agente NÃO pode fingir que pesquisou nem preencher a lacuna com memória
+    do modelo apresentada como fato atual: precisa dizer que não conseguiu.
+    """
+    detail = str(sres.get("error") or "sem retorno dos mecanismos de busca")
+    per_provider = sres.get("provider_errors") or {}
+    linhas = [
+        "AVISO DE SISTEMA — A BUSCA NA WEB ESTÁ INDISPONÍVEL NESTE MOMENTO.",
+        f"Motivo informado pelo serviço: {detail}",
+    ]
+    for name, err in list(per_provider.items())[:5]:
+        linhas.append(f"  - {name}: {err}")
+    linhas += [
+        "Ao responder sobre este assunto:",
+        "1. Diga explicitamente que a busca na internet falhou agora;",
+        "2. Se souber algo pelo seu conhecimento, entregue isso marcado como "
+        "conhecimento próprio e diga que pode estar desatualizado;",
+        "3. NÃO invente resultados, URLs, datas ou citações da web.",
+    ]
+    return "\n".join(linhas)
+
+
+# Comandos de busca que o usuário escreve por conveniência ("pesquise sobre X",
+# "me busca Y"). Removidos antes de virar query, para não poluir o mecanismo.
+_SEARCH_COMMAND_PREFIX = re.compile(
+    r"^\s*(me\s+(busca|pesquisa|pesquise)|quero\s+(saber|ver|pesquisar)\s+sobre|"
+    r"busca(rem)?|pesquis(a|e|ar)|procure|investigue|me diga sobre)\s*"
+    r"(sobre|por|:)?\s*",
+    re.IGNORECASE,
+)
+
+
+def _search_query(message: str) -> str:
+    """Limpa o comando de busca e devolve o termo puro para o mecanismo."""
+    text = re.sub(r"[\s?!.]+$", "", (message or "").strip())
+    cleaned = _SEARCH_COMMAND_PREFIX.sub("", text, count=1).strip()
+    return cleaned if len(cleaned) >= 3 else text
+
+
+def _agent_tools(agent: Dict[str, Any]) -> List[str]:
+    return list(AGENT_TOOLS.get(str(agent.get("id", "")), AGENT_TOOLS["nemo"]))
+
+
+def _run_web_search(user_id: str, agent: Dict[str, Any], message: str) -> Tuple[str, Dict[str, Any]]:
+    """Executa a busca quando o agente tem permissão e a pergunta pede dado externo.
+
+    Devolve (bloco_para_o_prompt, resumo_para_a_resposta). Nunca levanta: uma
+    falha de busca vira instrução explícita para o modelo, nunca resultado falso.
+    """
+    tools = _agent_tools(agent)
+    if not _needs_search(message, tools):
+        return "", {"used": False, "reason": "not_needed"}
+    query = _search_query(message)
+    try:
+        sres = WEB_SEARCH_SERVICE.search(user_id, query, limit=5)
+    except WebSearchError as exc:
+        sres = {"ok": False, "error": str(exc), "results": []}
+    except Exception:
+        logger.exception("Falha inesperada na busca na web (query=%s)", query[:120])
+        sres = {"ok": False, "error": "erro interno no serviço de busca", "results": []}
+    if sres.get("ok") and sres.get("results"):
+        return _search_block(sres), {
+            "used": True,
+            "ok": True,
+            "provider": sres.get("provider"),
+            "query": sres.get("query"),
+            "results": len(sres["results"]),
+        }
+    return _search_unavailable_block(sres), {
+        "used": True,
+        "ok": False,
+        "provider": sres.get("provider", "none"),
+        "query": query,
+        "error": sres.get("error"),
+        "results": 0,
+    }
+
+
 def _memory_block(user_id: str, agent_id: str) -> str:
     """Memória permanente do agente para este usuário (missão §24/25)."""
     try:
         mems = DATA_STORE.list_memories(user_id, agent_id) or []
     except Exception:
+        logger.exception("Falha ao ler memórias (user=%s agent=%s)", user_id, agent_id)
         return ""
     if not mems:
         return ""
@@ -712,13 +840,31 @@ async def rate_limit_middleware(request: Request, call_next):
 
 
 _client: Optional[OpenRouterClient] = None
+# Cache por usuário: cada chave própria cria o seu cliente, sem vazar para os
+# demais. O cliente padrão (chave do sistema) fica em `_client`.
+_client_by_user: Dict[str, OpenRouterClient] = {}
 
 
-def get_client() -> OpenRouterClient:
+def get_client(api_key: Optional[str] = None) -> OpenRouterClient:
+    """Cliente OpenRouter. `api_key=None` usa a chave do sistema (.env).
+
+    Quando o usuário tem chave própria, ela é usada no chat — antes a chave era
+    lida do banco e descartada, então a opção "minha chave" nunca surtia efeito.
+    """
     global _client
-    if _client is None:
-        _client = OpenRouterClient()
-    return _client
+    if not api_key:
+        if _client is None:
+            _client = OpenRouterClient()
+        return _client
+    fingerprint = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
+    cached = _client_by_user.get(fingerprint)
+    if cached is None:
+        cached = OpenRouterClient(api_key=api_key)
+        _client_by_user[fingerprint] = cached
+        if len(_client_by_user) > 200:  # evita crescimento sem limite
+            for old in list(_client_by_user)[:100]:
+                _client_by_user.pop(old, None)
+    return cached
 
 
 class ChatMessage(BaseModel):
@@ -734,6 +880,7 @@ class ChatRequest(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=900, ge=1, le=4000)
     context: str = Field(default="", max_length=12000)
+    conversation_id: Optional[str] = Field(default=None, max_length=120)
 
 
 class FileSaveRequest(BaseModel):
@@ -814,9 +961,15 @@ class TaskRequest(BaseModel):
     id: Optional[str] = None
     title: str = ""
     priority: str = "normal"
-    agentId: str = "nemo"
+    agentId: Optional[str] = None
+    # Aceita as duas grafias: o store local usa camelCase (`agentId`, `dueDate`)
+    # e a resposta do servidor volta em snake_case. Antes só o camelCase era
+    # lido, então um cliente que enviasse `agent_id` perdia o vínculo com o agente.
+    agent_id: Optional[str] = None
     status: str = "pending"
     dueDate: Optional[int] = None
+    due_date: Optional[int] = None
+    created_at: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1299,8 +1452,25 @@ def delete_event(event_id: str, request: Request) -> Dict[str, Any]:
 @app.post("/api/nemo/chat")
 def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
     user = _require_user(request)
+    # Preenchido abaixo por `_run_web_search`; `finish` pode ser chamado antes
+    # (rate limit, provedor ausente), então precisa de um valor inicial.
+    search_info: Dict[str, Any] = {"used": False, "reason": "not_needed"}
+    # Toda resposta do chat (sucesso OU falha) é persistida: antes, uma falha de
+    # IA fazia a pergunta do usuário desaparecer do histórico (§3/§4/§15).
+    def finish(response: Dict[str, Any]) -> Dict[str, Any]:
+        conv_id = _persist_chat(
+            user["id"], req.agent,
+            req.message,
+            str(response.get("content") or ""), req.conversation_id,
+            meta={"ok": bool(response.get("ok")), "model": response.get("model_used", "")},
+        )
+        if conv_id:
+            response["conversation_id"] = conv_id
+        response["search"] = search_info
+        return response
+
     if not AI_RATE_LIMITER.allow(user["id"]):
-        return {
+        return finish({
             "ok": True,
             "agent": req.agent,
             "content": (
@@ -1310,7 +1480,7 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
             "offline": True,
             "rate_limited": True,
             "latency_ms": 0,
-        }
+        })
     agent = _agent_persona(req.agent) or {
         "id": req.agent, "name": "Nemo", "title": "Assistente", "category": "assistant",
         "role": "Assistente pessoal.", "defaultModel": CATEGORY_MODEL_DEFAULT,
@@ -1320,7 +1490,18 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
     if mi is None:
         raise HTTPException(status_code=400, detail="Modelo não configurado para o NEMO.")
     fallback_slugs = list(mi.fallback_slugs)
-    system = _build_system_prompt(agent, req.context)
+    system_parts = [_build_system_prompt(agent, req.context)]
+    # Memória permanente do usuário (missão §11/§24) — antes era código morto.
+    memory_block = _memory_block(user["id"], agent["id"])
+    if memory_block:
+        system_parts.append(memory_block)
+    # Busca na web (missão §9/§10) — antes `_needs_search` nunca era chamado, ou
+    # seja, o agente NUNCA pesquisava. Agora roda dentro do chat, respeitando as
+    # ferramentas permitidas do agente.
+    search_block, search_info = _run_web_search(user["id"], agent, req.message)
+    if search_block:
+        system_parts.append(search_block)
+    system = "\n\n".join(p for p in system_parts if p)
     messages: List[Dict[str, str]] = [{"role": "system", "content": system}]
     for m in req.messages[-12:]:
         if m.role in ("user", "assistant") and m.content:
@@ -1335,16 +1516,22 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
     try:
         user_key_providers = {k.get("provider") for k in (DATA_STORE.list_api_keys(user["id"]) or [])}
     except Exception:
+        logger.exception("Falha ao listar chaves de IA do usuário %s", user["id"])
         user_key_providers = set()
 
-    api_key = None
+    api_key: Optional[str] = None
     provider = "openrouter"  # catálogo da NEMO roda 100% via OpenRouter
-    if provider not in configured_ids:
-        try:
-            api_key = DATA_STORE.get_api_key(user["id"], provider)
-        except Exception:
-            api_key = None
-    if not AI_SERVICE.has_system_key(provider) and not api_key:
+    # A chave do próprio usuário SEMPRE tem precedência sobre a chave do sistema
+    # (§16-18: quem cadastrou a chave espera que ela seja usada). Antes a chave
+    # do usuário só era lida quando o provedor não estava configurado no sistema
+    # e, mesmo assim, era descartada por `not AI_SERVICE.has_system_key(...)`.
+    try:
+        api_key = DATA_STORE.get_api_key(user["id"], provider)
+    except Exception:
+        logger.exception("Falha ao ler a chave de %s do usuário %s", provider, user["id"])
+        api_key = None
+
+    if not api_key and not AI_SERVICE.has_system_key(provider):
         # Nenhuma chave para o provedor escolhido → tenta degradar graciosamente
         # para qualquer provedor realmente configurado (missão §62).
         if configured_ids:
@@ -1354,19 +1541,33 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
             try:
                 api_key = DATA_STORE.get_api_key(user["id"], provider)
             except Exception:
+                logger.exception("Falha ao ler a chave de %s do usuário %s", provider, user["id"])
                 api_key = None
         else:
-            return _offline_no_provider(provider, req.agent, model)
+            return finish(_offline_no_provider(provider, req.agent, model))
 
-    fallback_slugs: List[str] = []
-    mi = get_model_by_id(model)
-    if mi:
-        fallback_slugs = mi.fallback_slugs
-
-    c = get_client()
+    c = get_client(api_key)
     started = time.perf_counter()
+    # Resolve o slug contra o catálogo ativo: slugs antigos (ex.:
+    # anthropic/claude-3.5-sonnet) foram desativados pelo OpenRouter e a
+    # requisição morria com 404 sem tentar nenhum fallback (§7).
+    # Defesa: `resolve_model_slug` consulta a rede e pode falhar ou devolver
+    # formato inesperado; nesse caso seguimos com o slug pedido, porque o
+    # `chat_completion` já tem a própria cadeia de fallback por 404.
+    if mi is not None:
+        try:
+            resolution = c.resolve_model_slug(mi)
+            resolved_slug, slug_was_fallback = resolution if isinstance(resolution, (tuple, list)) and len(resolution) == 2 else (None, False)
+        except Exception:
+            logger.warning("Falha ao resolver slug do modelo %s; usando o slug informado", model, exc_info=True)
+            resolved_slug, slug_was_fallback = None, False
+        if resolved_slug and resolved_slug != model:
+            logger.info("Slug do modelo resolvido: %s -> %s", model, resolved_slug)
+            model = resolved_slug
+            if slug_was_fallback:
+                fallback_slugs = [s for s in fallback_slugs if s != model]
     if not c.has_valid_key_format():
-        return {
+        return finish({
             "ok": False,
             "agent": req.agent,
             "content": "⚠️ Minha chave de acesso ao OpenRouter não está configurada. Crie um arquivo `.env` a partir de `.env.example` com sua chave do OpenRouter para eu responder de verdade.\n\nEnquanto isso, posso listar arquivos, montar tarefas e preparar o roteiro. 🐟",
@@ -1376,7 +1577,7 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
             "is_fallback": False,
             "offline": True,
             "latency_ms": 0,
-        }
+        })
     result: CompletionResult = c.chat_completion(
         model=model,
         messages=messages,
@@ -1388,10 +1589,11 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
     model_used = result.model_used or model
 
     if result.success:
-        _persist_chat(user["id"], agent["id"], req.message, result.content)
         _log_activity(user["id"], agent["id"], "chat", "ok", result.provider, result.model_used, result.latency_ms,
                       result.prompt_tokens, result.completion_tokens, result.total_tokens)
-        return {
+        logger.info("chat ok user=%s agent=%s model=%s lat=%.0fms tokens=%s",
+                    user["id"], agent["id"], result.model_used, latency_ms, result.total_tokens)
+        return finish({
             "ok": True,
             "agent": req.agent,
             "content": result.content,
@@ -1403,11 +1605,13 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
             "completion_tokens": result.completion_tokens,
             "total_tokens": result.total_tokens,
             "finish_reason": result.finish_reason,
-        }
+        })
     _log_activity(user["id"], agent["id"], "chat", "error", result.provider, result.model_used, latency_ms,
                   result.prompt_tokens, result.completion_tokens, result.total_tokens)
+    logger.warning("chat FALHOU user=%s agent=%s model=%s lat=%.0fms erro=%s",
+                   user["id"], agent["id"], result.model_used, latency_ms, (result.error_message or "")[:300])
     if _is_auth_error(result.error_message or ""):
-        return {
+        return finish({
             "ok": False,
             "agent": req.agent,
             "content": (
@@ -1422,9 +1626,9 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
             "is_fallback": False,
             "offline": True,
             "latency_ms": latency_ms,
-        }
+        })
     if _is_connection_error(result.error_message or ""):
-        return {
+        return finish({
             "ok": False,
             "agent": req.agent,
             "content": (
@@ -1437,8 +1641,8 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
             "is_fallback": False,
             "offline": True,
             "latency_ms": latency_ms,
-        }
-    return {
+        })
+    return finish({
         "ok": False,
         "agent": req.agent,
         "content": "Não consegui concluir a solicitação no modelo selecionado.",
@@ -1448,7 +1652,7 @@ def chat(req: ChatRequest, request: Request) -> Dict[str, Any]:
         "is_fallback": result.is_fallback,
         "offline": False,
         "latency_ms": latency_ms,
-    }
+    })
 
 
 def _provider_name(provider: str) -> str:
@@ -1478,17 +1682,42 @@ def _offline_no_provider(provider: str, agent_id: str, model: str) -> Dict[str, 
     }
 
 
-def _persist_chat(user_id: str, agent_id: str, user_message: str, reply: str) -> None:
-    """Persiste a conversa (Supabase ou local) — nunca quebra o chat."""
+def _persist_chat(user_id: str, agent_id: str, user_message: str, reply: str,
+                  conversation_id: Optional[str] = None,
+                  meta: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Persiste a conversa (Supabase ou local) e devolve o conversation_id usado.
+
+    Regras (missão §3/§4/§15):
+      - a mensagem do USUÁRIO é gravada mesmo que a resposta do agente falhe —
+        sem isso, uma falha de IA fazia a pergunta inteira desaparecer;
+      - a conversa indicada pelo cliente é respeitada; sem ela, usa a conversa
+        aberta mais recente do agente (compatibilidade com clientes antigos).
+    """
     try:
-        convs = DATA_STORE.list_conversations(user_id, agent_id) or []
-        conv = convs[0] if convs else DATA_STORE.create_conversation(user_id, agent_id, (user_message or "")[:60])
-        if user_message:
-            DATA_STORE.append_message(user_id, conv["id"], "user", user_message[:12000], {})
-        if reply:
-            DATA_STORE.append_message(user_id, conv["id"], "assistant", reply[:20000], {})
+        conv_id = (conversation_id or "").strip()
+        if conv_id:
+            known = {c.get("id") for c in (DATA_STORE.list_conversations(user_id) or [])}
+            if conv_id not in known:
+                conv_id = ""
+        if not conv_id:
+            convs = DATA_STORE.list_conversations(user_id, agent_id) or []
+            conv_id = convs[0].get("id") if convs else ""
+        if not conv_id:
+            created = DATA_STORE.create_conversation(user_id, agent_id, (user_message or "")[:60])
+            conv_id = str(created.get("id") or "")
+        if not conv_id:
+            logger.warning("Chat sem conversa: não foi possível criar conversa (user=%s agent=%s)", user_id, agent_id)
+            return None
+        if user_message and not DATA_STORE.append_message(user_id, conv_id, "user", user_message[:12000], {}):
+            logger.error("Mensagem do usuário NÃO foi gravada: conversa %s não existe (user=%s)", conv_id, user_id)
+        if reply and not DATA_STORE.append_message(user_id, conv_id, "assistant", reply[:20000], meta or {}):
+            logger.error("Resposta do agente NÃO foi gravada: conversa %s não existe (user=%s)", conv_id, user_id)
+        return conv_id
     except Exception:
-        pass
+        # A falha de persistência não pode derrubar a resposta do chat, mas precisa
+        # ser visível para o desenvolvedor (§31 — nada de except/pass silencioso).
+        logger.exception("Falha ao persistir conversa do usuário %s (agente %s)", user_id, agent_id)
+        return None
 
 
 def _log_activity(user_id: str, agent_id: str, operation: str, status: str,
@@ -1498,7 +1727,7 @@ def _log_activity(user_id: str, agent_id: str, operation: str, status: str,
         DATA_STORE.log_activity(user_id, agent_id, operation, status, provider, model, latency,
                                 prompt_tokens, completion_tokens, total_tokens)
     except Exception:
-        pass
+        logger.exception("Falha ao gravar log de atividade (operacao=%s status=%s)", operation, status)
 
 
 # ---------------------------------------------------------------------------
@@ -1517,7 +1746,8 @@ def ai_config(request: Request) -> Dict[str, Any]:
         settings = DATA_STORE.get_ai_settings(user["id"]) or {}
         keys = DATA_STORE.list_api_keys(user["id"]) or []
     except Exception:
-        pass
+        logger.exception("Falha ao carregar a central de IA do usuário %s", user["id"])
+        keys = []
     return {
         "ok": True,
         "system": {
@@ -1584,12 +1814,26 @@ def ai_save_key(req: AiKeyRequest, request: Request) -> Dict[str, Any]:
     return {"ok": True, "masked": mask_key(req.api_key), "verified": bool(test.get("ok")), "test": test}
 
 
+@app.get("/api/nemo/ai/keys")
+def ai_list_keys(request: Request) -> Dict[str, Any]:
+    """Lista as chaves do usuário — SOMENTE máscaras, nunca a chave completa
+    (§16-18). A camada offline do cliente chama esta rota ao reconectar."""
+    user = _require_user(request)
+    try:
+        keys = DATA_STORE.list_api_keys(user["id"]) or []
+    except Exception as exc:
+        logger.exception("Falha ao listar chaves de IA do usuário %s", user["id"])
+        raise HTTPException(status_code=500, detail="Não foi possível carregar suas chaves.")
+    return {"ok": True, "keys": keys}
+
+
 @app.delete("/api/nemo/ai/keys/{provider}")
 def ai_delete_key(provider: str, request: Request) -> Dict[str, Any]:
     user = _require_user(request)
     try:
         ok = DATA_STORE.delete_api_key(user["id"], provider)
-    except Exception:
+    except Exception as exc:
+        logger.exception("Falha ao remover chave %s do usuário %s", provider, user["id"])
         ok = False
     _log_activity(user["id"], "nemo", "delete_key", "ok" if ok else "not_found", provider)
     return {"ok": ok, "deleted": provider}
@@ -1623,15 +1867,24 @@ def ai_search(request: Request, query: str = Query("", description="Termo de bus
     user = _require_user(request)
     try:
         res = WEB_SEARCH_SERVICE.search(user["id"], query, limit)
-        if res.get("ok"):
-            try:
-                DATA_STORE.save_search(user["id"], agent, query, res.get("provider", ""), res.get("results", []))
-            except Exception:
-                pass
-            _log_activity(user["id"], agent, "web_search", "ok", res.get("provider", ""))
-        return res
     except WebSearchError as exc:
-        return {"ok": False, "query": query, "results": [], "error": exc.message}
+        # `WebSearchError` é uma Exception comum: usar `exc.message` estourava
+        # AttributeError e devolvia HTTP 500 em vez da mensagem real.
+        logger.warning("Busca recusada (user=%s query=%s): %s", user["id"], query[:80], exc)
+        return {"ok": False, "query": query, "provider": "none", "results": [],
+                "error": str(exc)}
+    if res.get("ok"):
+        try:
+            DATA_STORE.save_search(user["id"], agent, query, res.get("provider", ""), res.get("results", []))
+        except Exception:
+            # Falha ao registrar o histórico de pesquisa não pode esconder o
+            # resultado que o usuário já conseguiu (§31).
+            logger.exception("Falha ao salvar histórico de busca (user=%s)", user["id"])
+        _log_activity(user["id"], agent, "web_search", "ok", res.get("provider", ""))
+    else:
+        logger.warning("Busca sem resultado (user=%s query=%s) erros=%s",
+                       user["id"], query[:80], res.get("provider_errors"))
+    return res
 
 
 @app.get("/api/nemo/ai/memories")
@@ -1709,6 +1962,24 @@ def conversations_create(req: ConversationRequest, request: Request) -> Dict[str
     return {"ok": True, "conversation": conv}
 
 
+@app.put("/api/nemo/conversations/{conversation_id}")
+def conversations_update(conversation_id: str, request: Request, patch: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
+    """Atualiza metadados da conversa (título). Chamado pela camada offline do
+    cliente; sem este endpoint o sync de `conversations/update` recebia 405 e a
+    alteração ficava só no dispositivo."""
+    user = _require_user(request)
+    allowed = {k: v for k, v in patch.items() if k in ("title", "agent_id")}
+    if not allowed:
+        raise HTTPException(status_code=400, detail="Nada para atualizar.")
+    updated = DATA_STORE.update_conversation(user["id"], conversation_id, allowed)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Conversa não encontrada.")
+    for c in DATA_STORE.list_conversations(user["id"]):
+        if c.get("id") == conversation_id:
+            return {"ok": True, "conversation": c}
+    return {"ok": True, "conversation": {**allowed, "id": conversation_id}}
+
+
 @app.delete("/api/nemo/conversations/{conversation_id}")
 def conversations_delete(conversation_id: str, request: Request) -> Dict[str, Any]:
     user = _require_user(request)
@@ -1764,15 +2035,29 @@ def tasks_list(request: Request) -> Dict[str, Any]:
 @app.post("/api/nemo/tasks")
 def tasks_save(req: TaskRequest, request: Request) -> Dict[str, Any]:
     user = _require_user(request)
+    task_id = req.id or _gen_event_id()
+    status = req.status if req.status in VALID_TASK_STATUS else "pending"
+
+    # Preserva a data de criação original: antes todo save reescrevia
+    # created_at com _now_ms(), então reordenar/atualizar uma tarefa a fazia
+    # parecer recém-criada e sumia da ordenação correta.
+    created_at = req.created_at
+    if not created_at:
+        for existing in DATA_STORE.list_tasks(user["id"]) or []:
+            if existing.get("id") == task_id and existing.get("created_at"):
+                created_at = int(existing["created_at"])
+                break
+    now = _now_ms()
     task = {
-        "id": req.id or _gen_event_id(),
+        "id": task_id,
         "title": (req.title or "").strip() or "Tarefa sem título",
         "priority": req.priority if req.priority in ("urgente", "importante", "normal", "baixa") else "normal",
-        "agent_id": req.agentId or "nemo",
-        "status": req.status if req.status in VALID_TASK_STATUS else "pending",
-        "created_at": _now_ms(),
-        "due_date": req.dueDate,
-        "done_at": _now_ms() if req.status == "done" else None,
+        "agent_id": req.agentId or req.agent_id or "nemo",
+        "status": status,
+        "created_at": int(created_at) if created_at else now,
+        "updated_at": now,
+        "due_date": req.dueDate if req.dueDate is not None else req.due_date,
+        "done_at": now if status == "done" else None,
     }
     DATA_STORE.save_task(user["id"], task)
     return {"ok": True, "task": task}
@@ -1869,6 +2154,7 @@ def sync_pull(
 
     changes: Dict[str, List[Dict[str, Any]]] = {}
     server_version = int(time.time() * 1000)
+    unreadable: List[str] = []
 
     for store in store_list:
         try:
@@ -1876,12 +2162,16 @@ def sync_pull(
             if items:
                 changes[store] = items
         except Exception:
-            changes[store] = []
+            # Antes a loja inteira sumia da resposta sem aviso e o cliente
+            # acreditava estar sincronizado — perda silenciosa de dados (§31/§34).
+            logger.exception("Falha ao ler loja %s no sync/pull (user=%s)", store, user_id)
+            unreadable.append(store)
 
     return {
         "ok": True,
         "changes": changes,
         "server_version": server_version,
+        "unreadable_stores": unreadable,
     }
 
 
@@ -1925,7 +2215,7 @@ def _apply_sync_operation(user_id: str, op: SyncOperation) -> Dict[str, Any]:
             conv = DATA_STORE.create_conversation(user_id, data.get("agent_id", "nemo"), data.get("title", "Nova conversa"))
             return {"server_id": conv.get("id")}
         elif operation == "update":
-            DATA_STORE.update_conversation(data["id"], data)
+            DATA_STORE.update_conversation(user_id, data["id"], data)
             return {"server_id": data["id"]}
         elif operation == "delete":
             DATA_STORE.delete_conversation(user_id, data["id"])
@@ -1984,30 +2274,40 @@ def _apply_sync_operation(user_id: str, op: SyncOperation) -> Dict[str, Any]:
 
 
 def _get_store_changes_since(user_id: str, store: str, since: int) -> List[Dict[str, Any]]:
-    """Retorna itens modificados desde `since` (ms epoch)."""
+    """Retorna itens modificados desde `since` (ms epoch).
+
+    Não engole exceção: quem chama (`sync_pull`) registra o erro e devolve a loja
+    em `unreadable_stores`. Antes o `except: pass` aqui fazia o cliente achar que
+    estava sincronizado enquanto a loja inteira sumia da resposta.
+    """
     items: List[Dict[str, Any]] = []
 
-    try:
-        if store == "conversations":
-            items = DATA_STORE.list_conversations(user_id)
-        elif store == "memories":
-            items = DATA_STORE.list_memories(user_id)
-        elif store == "tasks":
-            items = DATA_STORE.list_tasks(user_id)
-        elif store == "events":
-            items = DATA_STORE.list_events()
-        elif store == "ai_keys":
-            items = DATA_STORE.list_api_keys(user_id)
-        elif store == "profile":
-            items = [DATA_STORE.get_profile(user_id)]
-        elif store == "ai_settings":
-            items = [DATA_STORE.get_ai_settings(user_id)]
-    except Exception:
-        pass
+    if store == "conversations":
+        items = DATA_STORE.list_conversations(user_id)
+    elif store == "memories":
+        items = DATA_STORE.list_memories(user_id)
+    elif store == "tasks":
+        items = DATA_STORE.list_tasks(user_id)
+    elif store == "events":
+        items = DATA_STORE.list_events(user_id)
+    elif store == "ai_keys":
+        items = DATA_STORE.list_api_keys(user_id)
+    elif store == "profile":
+        items = [DATA_STORE.get_profile(user_id)]
+    elif store == "ai_settings":
+        items = [DATA_STORE.get_ai_settings(user_id)]
+    else:
+        return []
 
     filtered = []
     for item in items:
-        updated = item.get("updated_at") or item.get("created_at") or item.get("updatedAt") or 0
+        # `createdAt` (camelCase) é a chave real dos eventos do calendário e de
+        # boa parte do histórico do cliente: sem ela o filtro de `since` zerava e
+        # os eventos nunca entravam no sync/pull.
+        updated = (
+            item.get("updated_at") or item.get("created_at")
+            or item.get("updatedAt") or item.get("createdAt") or 0
+        )
         if isinstance(updated, str):
             try:
                 updated = int(datetime.fromisoformat(updated.replace("Z", "+00:00")).timestamp() * 1000)
@@ -2022,9 +2322,13 @@ def _get_store_changes_since(user_id: str, store: str, since: int) -> List[Dict[
 def _apply_local_wins(user_id: str, store: str, data: Dict[str, Any]) -> None:
     """Força dados locais no servidor."""
     if store == "conversations":
-        DATA_STORE.update_conversation(data["id"], data)
+        DATA_STORE.update_conversation(user_id, data["id"], data)
     elif store == "memories":
-        pass
+        # Antes era no-op: o cliente marcava a memória como resolvida e ela
+        # nunca chegava ao servidor (§34 — sem dado duplicado, mas também sem dado).
+        if data.get("content"):
+            DATA_STORE.save_memory(user_id, str(data.get("agent_id") or "nemo"),
+                                   str(data["content"]), str(data.get("kind") or "obs"))
     elif store == "tasks":
         DATA_STORE.save_task(user_id, data)
     elif store == "events":
@@ -2045,7 +2349,7 @@ def _apply_merge(user_id: str, store: str, data: Dict[str, Any]) -> None:
                 break
         if existing:
             merged = {**existing, **{k: v for k, v in data.items() if v is not None}}
-            DATA_STORE.update_conversation(data["id"], merged)
+            DATA_STORE.update_conversation(user_id, data["id"], merged)
     elif store == "tasks":
         DATA_STORE.save_task(user_id, data)
     elif store == "events":

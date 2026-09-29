@@ -4,19 +4,28 @@ import { nemoApi, type ChatHistoryMessage } from "@/api/nemo";
 import { getAgent } from "@/data/agents";
 import { FUNNY_PHRASES, pickPhrase } from "@/data/statusPhrases";
 
-const OFFLINE_RESPONSES: Record<string, string> = {
-  nemo:
-    "Não consegui falar com o modelo (servidor NEMO offline). Rode `python nemo_server.py` e configure sua chave no `.env` para eu responder de verdade.\n\nEnquanto isso, registrei sua solicitação em **Tarefas** e nos logs. 🐟",
-  default:
-    "Servidor de IA offline. Use `python nemo_server.py` para ativar o chat com os modelos OpenRouter.",
-};
+/**
+ * Mensagem exibida quando a requisição nem chegou ao servidor (DNS, conexão
+ * recusada, servidor derrubado). Antes era a resposta para QUALQUER falha —
+ * inclusive HTTP 401, 404, 422 e 500 — então um erro do backend mandava o
+ * usuário "rode o servidor" (§36: não mascarar falha com resposta genérica).
+ */
+function describeNetworkError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error ?? "");
+  if (/Failed to fetch|NetworkError|Load failed|ERR_CONNECTION/i.test(raw)) {
+    return "Não consegui alcançar o servidor do SYNOP. Verifique se ele está rodando (janela do backend ativa) e se a sua conexão com a internet funciona.";
+  }
+  return raw || "Falha de comunicação com o servidor.";
+}
 
 export function useNemoChat() {
   const threads = useIdeStore((s) => s.threads);
+  const conversationIds = useIdeStore((s) => s.conversationIds);
   const addUserMessage = useIdeStore((s) => s.addUserMessage);
   const insertAgentMessage = useIdeStore((s) => s.insertAgentMessage);
   const patchMessage = useIdeStore((s) => s.patchMessage);
   const setLiveStatus = useIdeStore((s) => s.setLiveStatus);
+  const setConversationId = useIdeStore((s) => s.setConversationId);
   const addTask = useIdeStore((s) => s.addTask);
   const updateTask = useIdeStore((s) => s.updateTask);
   const addLog = useIdeStore((s) => s.addLog);
@@ -53,7 +62,8 @@ export function useNemoChat() {
         .map((m): ChatHistoryMessage => ({ role: m.role === "agent" ? "assistant" : "user", content: m.content }))
         .slice(-12);
       try {
-        const res = await nemoApi.chat(agentId, content, history, agent.defaultModel);
+        const res = await nemoApi.chat(agentId, content, history, agent.defaultModel, conversationIds[agentId]);
+        if (res.conversation_id) setConversationId(agentId, res.conversation_id);
         if (res.ok) {
           ok = true;
           offline = !!res.offline;
@@ -68,17 +78,28 @@ export function useNemoChat() {
               completionTokens: res.completion_tokens,
             },
           });
+          if (res.search?.used) {
+            addLog({
+              tone: res.search.ok ? "info" : "warn",
+              agentId,
+              text: res.search.ok
+                ? `${agent.name}: buscou "${res.search.query}" em ${res.search.provider} (${res.search.results} resultados)`
+                : `${agent.name}: busca na web falhou (${res.search.error ?? "sem retorno"})`,
+            });
+          }
           addLog({ tone: res.is_fallback ? "warn" : "info", agentId, text: res.is_fallback ? `${agent.name}: resposta via fallback (${res.model_used})` : `${agent.name}: respondido (${res.model_used}, ${res.latency_ms ?? 0}ms)` });
           notify({ icon: agent.icon, text: `${agent.name} respondeu`, tone: res.is_fallback ? "warn" : "ok" });
         } else {
+          // O texto real vem do backend (erro do modelo, chave, limite...):
+          // mostrar a mensagem do servidor em vez de um texto genérico.
           const message = res.content ?? res.error ?? "Erro desconhecido.";
           patchMessage(agentId, msgId, { content: message, error: res.error, status: "error" });
           addLog({ tone: res.offline ? "warn" : "error", agentId, text: `${agent.name}: ${message.slice(0, 140)}` });
           notify({ icon: agent.icon, text: `${agent.name}: ${res.error_code ?? "erro"}`, tone: res.offline ? "warn" : "error" });
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Servidor NEMO indisponível.";
-        patchMessage(agentId, msgId, { content: OFFLINE_RESPONSES[agentId] ?? OFFLINE_RESPONSES.default, error: message, status: "error" });
+        const message = describeNetworkError(error);
+        patchMessage(agentId, msgId, { content: message, error: message, status: "error" });
         addLog({ tone: "error", agentId, text: `Servidor NEMO não respondeu: ${message.slice(0, 140)}` });
         notify({ icon: agent.icon, text: "Servidor NEMO indisponível", tone: "error" });
       }
@@ -90,7 +111,21 @@ export function useNemoChat() {
         window.setTimeout(() => updateTask(taskId, ok ? { status: "done" } : { status: "error" }), ok ? 1000 : 300);
       }
     },
-    [threads, addUserMessage, addHistory, addLog, insertAgentMessage, patchMessage, setLiveStatus, addTask, updateTask, notify, funnyStatus],
+    [
+      threads,
+      conversationIds,
+      addUserMessage,
+      addHistory,
+      addLog,
+      insertAgentMessage,
+      patchMessage,
+      setLiveStatus,
+      setConversationId,
+      addTask,
+      updateTask,
+      notify,
+      funnyStatus,
+    ],
   );
 
   return { send };

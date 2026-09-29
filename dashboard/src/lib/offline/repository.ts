@@ -1,4 +1,5 @@
 import { indexedDBManager, type OfflineStoreName } from "./indexedDB";
+import { extractApiError, getBearerToken } from "@/api/nemo";
 import type { AiConversation, AiMemory, AiTask, CalendarEvent, AiProfile } from "@/types/idea";
 
 export interface DataRepository {
@@ -229,17 +230,19 @@ class LocalRepository implements DataRepository {
 class RemoteRepository implements DataRepository {
   private baseUrl = "/api/nemo";
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const token = localStorage.getItem("nemo-auth");
     const headers = new Headers(init?.headers);
     headers.set("Content-Type", "application/json");
-    if (token) {
-      try {
-        const parsed = JSON.parse(token);
-        headers.set("Authorization", `Bearer ${parsed.state?.token ?? parsed.token}`);
-      } catch {}
-    }
+    // O token vinha de `localStorage["nemo-auth"].state.token`, chave que o
+    // store nunca grava: o header virava `Bearer undefined` e o servidor
+    // respondia 401 mesmo com a sessão válida. No navegador a sessão é o
+    // cookie HttpOnly; o Bearer só existe para clientes não-browser.
+    const token = getBearerToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
     const res = await fetch(`${this.baseUrl}${path}`, { ...init, headers, credentials: "include" });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(extractApiError(body, res.status));
+    }
     return res.json();
   }
 
@@ -256,8 +259,11 @@ class RemoteRepository implements DataRepository {
   async getConversation(id: string): Promise<AiConversation | null> {
     try {
       return await this.request(`/conversations/${id}`);
-    } catch {
-      return null;
+    } catch (error) {
+      // 404 é o único caso em que "não existe" é a resposta correta; nos demais
+      // (401, 500, rede) devolver null fazia o chamador limpar a conversa da tela.
+      if (error instanceof Error && /404/.test(error.message)) return null;
+      throw error;
     }
   }
 
@@ -367,6 +373,14 @@ class RemoteRepository implements DataRepository {
   async cleanupSynced(): Promise<number> { return 0; }
 }
 
+/** Loga a queda para o armazenamento local — degradar é correto, sumir é não. */
+function warnRemoteFallback(error: unknown): void {
+  console.warn(
+    "[NEMO offline] servidor indisponível, usando dados locais:",
+    error instanceof Error ? error.message : error,
+  );
+}
+
 class SyncRepository implements DataRepository {
   constructor(
     private local: LocalRepository,
@@ -378,8 +392,25 @@ class SyncRepository implements DataRepository {
     if (!this.isOnline()) return fallback();
     try {
       return await fn();
-    } catch {
+    } catch (error) {
+      // Degradar para o IndexedDB é o comportamento correto, mas era SILENCIOSO:
+      // o usuário via os dados antigos do navegador sem nenhuma pista de que o
+      // servidor estava fora do ar ou devolvendo erro (§31/§36).
+      warnRemoteFallback(error);
       return fallback();
+    }
+  }
+
+  /** Grava localmente e enfileira para o servidor, avisando se a fila falhar. */
+  private async persistLocally(
+    apply: () => Promise<void>,
+    enqueue: () => Promise<unknown>,
+  ): Promise<void> {
+    await apply();
+    try {
+      await enqueue();
+    } catch (error) {
+      console.warn("[NEMO offline] falha ao enfileirar operação para sincronização:", error);
     }
   }
 
@@ -394,12 +425,15 @@ class SyncRepository implements DataRepository {
     if (this.isOnline()) {
       try {
         return await this.remote.createConversation(agentId, title);
-      } catch {
-        // Fall through to local
+      } catch (error) {
+        warnRemoteFallback(error);
       }
     }
     const local = await this.local.createConversation(agentId, title);
-    await this.local.enqueueSync("create", "conversations", local);
+    await this.persistLocally(
+      async () => {},
+      () => this.local.enqueueSync("create", "conversations", local),
+    );
     return local;
   }
 
@@ -415,10 +449,14 @@ class SyncRepository implements DataRepository {
       try {
         await this.remote.updateConversation(id, patch);
         return;
-      } catch {}
+      } catch (error) {
+        warnRemoteFallback(error);
+      }
     }
-    await this.local.updateConversation(id, patch);
-    await this.local.enqueueSync("update", "conversations", { id, ...patch });
+    await this.persistLocally(
+      () => this.local.updateConversation(id, patch),
+      () => this.local.enqueueSync("update", "conversations", { id, ...patch }),
+    );
   }
 
   async deleteConversation(id: string): Promise<void> {
@@ -426,10 +464,14 @@ class SyncRepository implements DataRepository {
       try {
         await this.remote.deleteConversation(id);
         return;
-      } catch {}
+      } catch (error) {
+        warnRemoteFallback(error);
+      }
     }
-    await this.local.deleteConversation(id);
-    await this.local.enqueueSync("delete", "conversations", { id });
+    await this.persistLocally(
+      () => this.local.deleteConversation(id),
+      () => this.local.enqueueSync("delete", "conversations", { id }),
+    );
   }
 
   async listMessages(conversationId: string) {
@@ -455,10 +497,15 @@ class SyncRepository implements DataRepository {
     if (this.isOnline()) {
       try {
         return await this.remote.saveMemory(agentId, content, kind);
-      } catch {}
+      } catch (error) {
+        warnRemoteFallback(error);
+      }
     }
     const local = await this.local.saveMemory(agentId, content, kind);
-    await this.local.enqueueSync("create", "memories", local);
+    await this.persistLocally(
+      async () => {},
+      () => this.local.enqueueSync("create", "memories", local),
+    );
     return local;
   }
 
@@ -467,10 +514,14 @@ class SyncRepository implements DataRepository {
       try {
         await this.remote.deleteMemory(id);
         return;
-      } catch {}
+      } catch (error) {
+        warnRemoteFallback(error);
+      }
     }
-    await this.local.deleteMemory(id);
-    await this.local.enqueueSync("delete", "memories", { id });
+    await this.persistLocally(
+      () => this.local.deleteMemory(id),
+      () => this.local.enqueueSync("delete", "memories", { id }),
+    );
   }
 
   async listTasks(): Promise<AiTask[]> {
@@ -485,10 +536,14 @@ class SyncRepository implements DataRepository {
       try {
         await this.remote.saveTask(task);
         return;
-      } catch {}
+      } catch (error) {
+        warnRemoteFallback(error);
+      }
     }
-    await this.local.saveTask(task);
-    await this.local.enqueueSync("update", "tasks", task);
+    await this.persistLocally(
+      () => this.local.saveTask(task),
+      () => this.local.enqueueSync("update", "tasks", task),
+    );
   }
 
   async deleteTask(id: string): Promise<void> {
@@ -496,10 +551,14 @@ class SyncRepository implements DataRepository {
       try {
         await this.remote.deleteTask(id);
         return;
-      } catch {}
+      } catch (error) {
+        warnRemoteFallback(error);
+      }
     }
-    await this.local.deleteTask(id);
-    await this.local.enqueueSync("delete", "tasks", { id });
+    await this.persistLocally(
+      () => this.local.deleteTask(id),
+      () => this.local.enqueueSync("delete", "tasks", { id }),
+    );
   }
 
   async listEvents(): Promise<CalendarEvent[]> {
@@ -514,10 +573,14 @@ class SyncRepository implements DataRepository {
       try {
         await this.remote.saveEvent(event);
         return;
-      } catch {}
+      } catch (error) {
+        warnRemoteFallback(error);
+      }
     }
-    await this.local.saveEvent(event);
-    await this.local.enqueueSync("update", "events", event);
+    await this.persistLocally(
+      () => this.local.saveEvent(event),
+      () => this.local.enqueueSync("update", "events", event),
+    );
   }
 
   async deleteEvent(id: string): Promise<void> {
@@ -525,10 +588,14 @@ class SyncRepository implements DataRepository {
       try {
         await this.remote.deleteEvent(id);
         return;
-      } catch {}
+      } catch (error) {
+        warnRemoteFallback(error);
+      }
     }
-    await this.local.deleteEvent(id);
-    await this.local.enqueueSync("delete", "events", { id });
+    await this.persistLocally(
+      () => this.local.deleteEvent(id),
+      () => this.local.enqueueSync("delete", "events", { id }),
+    );
   }
 
   async getProfile(): Promise<AiProfile> {
@@ -543,10 +610,14 @@ class SyncRepository implements DataRepository {
       try {
         await this.remote.saveProfile(data);
         return;
-      } catch {}
+      } catch (error) {
+        warnRemoteFallback(error);
+      }
     }
-    await this.local.saveProfile(data);
-    await this.local.enqueueSync("update", "profile", data);
+    await this.persistLocally(
+      () => this.local.saveProfile(data),
+      () => this.local.enqueueSync("update", "profile", data),
+    );
   }
 
   async listApiKeys() {
@@ -565,7 +636,9 @@ class SyncRepository implements DataRepository {
       try {
         await this.remote.saveApiKey(provider, encrypted, masked, model, verified);
         return;
-      } catch {}
+      } catch (error) {
+        warnRemoteFallback(error);
+      }
     }
     await this.local.saveApiKey(provider, encrypted, masked, model, verified);
   }
@@ -575,7 +648,9 @@ class SyncRepository implements DataRepository {
       try {
         await this.remote.deleteApiKey(provider);
         return;
-      } catch {}
+      } catch (error) {
+        warnRemoteFallback(error);
+      }
     }
     await this.local.deleteApiKey(provider);
   }
@@ -592,9 +667,14 @@ class SyncRepository implements DataRepository {
       try {
         await this.remote.saveAiSettings(data);
         return;
-      } catch {}
+      } catch (error) {
+        warnRemoteFallback(error);
+      }
     }
-    await this.local.saveAiSettings(data);
+    await this.persistLocally(
+      () => this.local.saveAiSettings(data),
+      () => this.local.enqueueSync("update", "ai_settings", data),
+    );
   }
 
   async logActivity(data: any): Promise<void> {
@@ -602,7 +682,9 @@ class SyncRepository implements DataRepository {
     if (this.isOnline()) {
       try {
         await this.remote.logActivity(data);
-      } catch {}
+      } catch (error) {
+        warnRemoteFallback(error);
+      }
     }
   }
 
@@ -618,7 +700,9 @@ class SyncRepository implements DataRepository {
     if (this.isOnline()) {
       try {
         await this.remote.saveSearch(data);
-      } catch {}
+      } catch (error) {
+        warnRemoteFallback(error);
+      }
     }
   }
 

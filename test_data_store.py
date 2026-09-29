@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import unittest
+import unittest.mock  # `unittest.mock` precisa ser importado explicitamente (usado em TestFactory)
 
 from data_store import LocalStore, make_data_store, _read_json
 from ai_keys import KeyStore

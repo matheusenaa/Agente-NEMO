@@ -60,11 +60,29 @@ body,
   pointer-events: none;
 }
 
+/* Marca como plano de fundo da tela de login: a logo ocupa a tela inteira em
+   baixa opacidade, em vez de repetir o nome/logo dentro do cartão. */
+.auth-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: var(--brand-logo);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: min(72vmin, 640px);
+  opacity: 0.07;
+  filter: grayscale(0.25);
+  pointer-events: none;
+}
+
 .auth-card {
   position: relative;
   width: 100%;
   max-width: 400px;
-  background: var(--bg1);
+  /* Vidro: o cartão deixa o plano de fundo da marca aparecer por trás. */
+  background: color-mix(in srgb, var(--bg1) 72%, transparent);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
   border: 1px solid var(--border);
   border-radius: 18px;
   padding: 30px 30px 22px;
@@ -224,6 +242,42 @@ body,
   background: var(--bg0);
 }
 .auth-verify-text { font-size: 13px; color: var(--text2); }
+
+/* ============================================================
+   Login — responsividade
+   Em telas estreitas o cartão ocupava 400px + 48px de padding e
+   estourava a largura, generateando scroll horizontal e cortando
+   os botões de OAuth.
+   ============================================================ */
+@media (max-width: 520px) {
+  .auth-wrap { padding: 16px; align-items: flex-start; overflow-y: auto; }
+  .auth-card {
+    max-width: 100%;
+    padding: 24px 18px 18px;
+    border-radius: 16px;
+  }
+  .auth-brandname { font-size: 24px; letter-spacing: 4px; }
+  .auth-logo { font-size: 34px; }
+  .auth-form { gap: 12px; }
+  .auth-agent-strip { gap: 6px; }
+  .auth-foot { flex-direction: column; align-items: center; gap: 4px; }
+  .auth-bg::before { background-size: min(90vmin, 420px); opacity: 0.06; }
+}
+
+@media (max-height: 720px) {
+  .auth-card { padding: 22px 24px 16px; }
+  .auth-brand { margin-bottom: 12px; }
+  .auth-agent-strip { margin-bottom: 10px; }
+  .auth-sep { margin-bottom: 14px; }
+  .auth-foot { margin-top: 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-card { animation: none; }
+  .auth-agent:hover { transform: none; }
+  .auth-submit:hover:not(:disabled),
+  .oauth-btn:hover:not(:disabled) { transform: none; }
+}
 
 /* Painel estático de fallback (quando WebGL/Phaser não está disponível) */
 .room-fallback {

@@ -40,7 +40,7 @@ function AdminUsersCard() {
       return;
     }
     try {
-      await adminApi.createUser(token, { ...nc, role: nc.role });
+      await adminApi.createUser({ ...nc, role: nc.role }, token);
       notify({ icon: "✅", text: `Conta criada para ${nc.email}.`, tone: "ok" });
       setNc({ name: "", email: "", password: "", role: "user" });
       load();
@@ -51,7 +51,7 @@ function AdminUsersCard() {
 
   const toggleRole = async (u: AuthUser) => {
     try {
-      await adminApi.setRole(token, u.id, u.role === "admin" ? "user" : "admin");
+      await adminApi.setRole(u.id, u.role === "admin" ? "user" : "admin", token);
       notify({ icon: "🛡️", text: `${u.name} agora é ${u.role === "admin" ? "USUÁRIO" : "ADMIN"}.`, tone: "ok" });
       load();
     } catch (e) {
@@ -63,7 +63,7 @@ function AdminUsersCard() {
     const pwd = window.prompt(`Nova senha para ${u.name} (mínimo 6 caracteres):`);
     if (!pwd) return;
     try {
-      await adminApi.resetPassword(token, u.id, pwd);
+      await adminApi.resetPassword(u.id, pwd, token);
       notify({ icon: "🔑", text: `Senha de ${u.name} redefinida.`, tone: "ok" });
     } catch (e) {
       notify({ icon: "⚠️", text: (e as Error).message, tone: "error" });

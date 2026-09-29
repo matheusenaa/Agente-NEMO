@@ -7,14 +7,15 @@ echo  SYNOP - Iniciando componentes...
 echo ==========================================
 echo.
 
-REM Verificar se a porta 8798 ja esta em uso
-netstat -ano | findstr ":8798" >nul
+REM Verificar se a porta 8798 ja esta em uso (somente em ESCUTA)
+netstat -ano | findstr "LISTENING" | findstr ":8798" >nul
 if %errorlevel% equ 0 (
     echo [ERRO] Porta 8798 ja esta em uso. Encerre o processo anterior ou use outra porta.
     echo.
     echo Processos na porta 8798:
-    netstat -ano | findstr ":8798"
+    netstat -ano | findstr "LISTENING" | findstr ":8798"
     echo.
+    if defined SYNOP_NO_PAUSE exit /b 1
     pause
     exit /b 1
 )
@@ -36,7 +37,7 @@ if %errorlevel% equ 0 (
 if %WAITED% geq %MAX_WAIT% (
     echo [ERRO] Timeout: backend nao respondeu apos %MAX_WAIT% segundos.
     echo Verifique a janela "SYNOP Backend" para erros.
-    pause
+    if not defined SYNOP_NO_PAUSE pause
     exit /b 1
 )
 goto :WAIT_LOOP
@@ -46,9 +47,14 @@ echo [3/3] Dashboard pronto em http://127.0.0.1:8798/
 echo.
 echo Para desenvolvimento: use start_nemo_dev.bat (porta 5173).
 echo.
-echo Abrindo navegador no dashboard de producao...
-start "" "http://127.0.0.1:8798/"
+
+REM Nao abre o navegador em execucao nao interativa (testes, CI, agents).
+if not defined SYNOP_NO_PAUSE (
+    echo Abrindo navegador no dashboard de producao...
+    start "" "http://127.0.0.1:8798/"
+)
 
 echo.
-echo SYNOP rodando! Feche esta janela quando quiser encerrar.
-pause
+echo SYNOP rodando! Feche a janela "SYNOP Backend" para encerrar.
+if not defined SYNOP_NO_PAUSE pause
+exit /b 0

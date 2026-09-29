@@ -57,9 +57,15 @@ class DataStore:
     # ---- conversas ----
     def list_conversations(self, user_id: str, agent_id: Optional[str] = None) -> List[Dict[str, Any]]: ...
     def create_conversation(self, user_id: str, agent_id: str, title: str) -> Dict[str, Any]: ...
-    def append_message(self, user_id: str, conversation_id: str, role: str, content: str, meta: Optional[Dict[str, Any]] = None) -> None: ...
+    def append_message(self, user_id: str, conversation_id: str, role: str, content: str, meta: Optional[Dict[str, Any]] = None) -> bool: ...
     def list_messages(self, user_id: str, conversation_id: str) -> List[Dict[str, Any]]: ...
     def delete_conversation(self, user_id: str, conversation_id: str) -> bool: ...
+    def update_conversation(self, user_id: str, conversation_id: str, patch: Dict[str, Any]) -> bool: ...
+
+    # ---- eventos (calendário) ----
+    def list_events(self, user_id: str) -> List[Dict[str, Any]]: ...
+    def save_event(self, user_id: str, event: Dict[str, Any]) -> None: ...
+    def delete_event(self, user_id: str, event_id: str) -> bool: ...
 
     # ---- perfil do usuário ----
     def get_profile(self, user_id: str) -> Dict[str, Any]: ...
@@ -116,11 +122,52 @@ def _read_json(path: Path, default: Any) -> Any:
         return default
 
 
+def _replace_with_retry(source: Path, destination: Path, attempts: int = 6) -> None:
+    """Substituição atômica com retry para travamento transitório no Windows.
+
+    `Path.replace` falha com `PermissionError [WinError 5]` quando outro
+    processo (antivírus, indexador, o próprio backend) mantém o arquivo de
+    destino aberto. Uma falha única perdia a gravação silenciosamente.
+    """
+    last_error: Optional[BaseException] = None
+    for attempt in range(attempts):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError as exc:
+            last_error = exc
+            if attempt == attempts - 1:
+                break
+            time.sleep(0.05 * (2 ** attempt))
+    raise last_error if last_error else OSError(f"Falha ao substituir {destination}")
+
+
 def _write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    _replace_with_retry(tmp, path)
+
+
+def _item_timestamp(item: Dict[str, Any]) -> int:
+    """Timestamp em ms de um registro, para o filtro incremental do sync.
+
+    Nenhum writer local gravava `sync_version`, então o filtro antigo
+    (`item.get("sync_version", 0) > since`) descartava TODAS as lojas e o
+    sync/pull respondia "nada mudou" mesmo com dados novos no servidor.
+    """
+    raw = (
+        item.get("updated_at") or item.get("created_at")
+        or item.get("updatedAt") or item.get("createdAt") or 0
+    )
+    if isinstance(raw, (int, float)):
+        return int(raw)
+    if isinstance(raw, str):
+        try:
+            return int(datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp() * 1000)
+        except Exception:
+            return 0
+    return 0
 
 
 class LocalStore(DataStore):
@@ -171,8 +218,9 @@ class LocalStore(DataStore):
         return None
 
     def append_message(self, user_id: str, conversation_id: str, role: str, content: str,
-                       meta: Optional[Dict[str, Any]] = None) -> None:
+                       meta: Optional[Dict[str, Any]] = None) -> bool:
         convs = _read_json(self._f(user_id, "conversations.json"), [])
+        appended = False
         for c in convs:
             if c.get("id") == conversation_id:
                 c.setdefault("messages", []).append({
@@ -180,8 +228,13 @@ class LocalStore(DataStore):
                     "created_at": _now_ms(),
                 })
                 c["updated_at"] = _now_ms()
+                appended = True
                 break
-        _write_json(self._f(user_id, "conversations.json"), convs)
+        if appended:
+            _write_json(self._f(user_id, "conversations.json"), convs)
+        # Antes escrevia o arquivo de volta sem gravar nada quando o id da
+        # conversa não existia: a mensagem sumia sem erro nem log (§3/§31).
+        return appended
 
     def list_messages(self, user_id: str, conversation_id: str) -> List[Dict[str, Any]]:
         conv = self._find_conversation(user_id, conversation_id)
@@ -211,7 +264,7 @@ class LocalStore(DataStore):
         events.sort(key=lambda e: (e.get("date", ""), e.get("time", "")))
         return events
 
-    def save_event(self, event: Dict[str, Any]) -> None:
+    def save_event(self, user_id: str, event: Dict[str, Any]) -> None:
         events = _read_json(self._f(user_id, "events.json"), [])
         events = [e for e in events if e.get("id") != event.get("id")]
         events.insert(0, event)
@@ -364,16 +417,36 @@ class LocalStore(DataStore):
         return self._f(user_id, "sync_metadata.json")
 
     def get_changes_since(self, user_id: str, since_sync_version: int, stores: Optional[List[str]] = None) -> Dict[str, List[Dict[str, Any]]]:
-        all_stores = ["conversations", "messages", "memories", "tasks", "events", "ai_keys", "ai_settings", "profile", "activity_logs", "web_searches"]
+        # Os nomes reais dos arquivos: `activity_logs`/`web_searches` nunca
+        # existiram como arquivo e `messages` vive dentro de `conversations.json`.
+        # Ler `<store>.json` direto fazia 3 das 10 lojas voltarem sempre vazias.
+        files = {
+            "activity_logs": "activity.json",
+            "web_searches": "searches.json",
+        }
+        all_stores = ["conversations", "memories", "tasks", "events", "ai_keys", "ai_settings", "profile", "activity_logs", "web_searches"]
         target_stores = stores if stores else all_stores
         changes: Dict[str, List[Dict[str, Any]]] = {}
         for store in target_stores:
-            items = _read_json(self._f(user_id, f"{store}.json"), [])
+            if store == "messages":
+                # Mensagens chegam aninhadas em cada conversa.
+                items = []
+                for conv in _read_json(self._f(user_id, "conversations.json"), []):
+                    for msg in conv.get("messages", []):
+                        items.append({"conversation_id": conv.get("id"), **msg})
+            else:
+                items = _read_json(self._f(user_id, files.get(store, f"{store}.json")), [])
             if store == "ai_keys":
                 items = [{"id": k, **v} for k, v in items.items()]
             elif store == "ai_settings" or store == "profile":
                 items = [items] if items else []
-            filtered = [item for item in items if item.get("sync_version", 0) > since_sync_version]
+            if not isinstance(items, list):
+                continue
+            filtered = [
+                item for item in items
+                if isinstance(item, dict)
+                and _item_timestamp(item) > since_sync_version
+            ]
             if filtered:
                 changes[store] = filtered
         return changes
@@ -391,7 +464,7 @@ class LocalStore(DataStore):
                         conv = self.create_conversation(user_id, data.get("agent_id", "nemo"), data.get("title", "Nova conversa"))
                         results.append({"client_id": client_id, "status": "ok", "server_id": conv.get("id")})
                     elif operation == "update":
-                        self.update_conversation(data["id"], data)
+                        self.update_conversation(user_id, data["id"], data)
                         results.append({"client_id": client_id, "status": "ok", "server_id": data["id"]})
                     elif operation == "delete":
                         self.delete_conversation(user_id, data["id"])
@@ -412,7 +485,7 @@ class LocalStore(DataStore):
                         results.append({"client_id": client_id, "status": "ok", "server_id": data["id"]})
                 elif store == "events":
                     if operation in ("create", "update"):
-                        self.save_event(data)
+                        self.save_event(user_id, data)
                         results.append({"client_id": client_id, "status": "ok", "server_id": data.get("id")})
                     elif operation == "delete":
                         self.delete_event(user_id, data["id"])
@@ -519,13 +592,22 @@ class SupabaseStore(DataStore):
         return self._strip_ids(row[0]) if row else {"id": None, **data}
 
     def append_message(self, user_id: str, conversation_id: str, role: str, content: str,
-                       meta: Optional[Dict[str, Any]] = None) -> None:
-        self._t("messages").insert({
-            "conversation_id": conversation_id, "user_id": user_id,
-            "role": role, "content": content, "meta": meta or {},
-            "created_at": _now_iso(),
-        }).execute()
-        self._t("conversations").update({"updated_at": _now_iso()}).eq("id", conversation_id).execute()
+                       meta: Optional[Dict[str, Any]] = None) -> bool:
+        try:
+            self._t("messages").insert({
+                "conversation_id": conversation_id, "user_id": user_id,
+                "role": role, "content": content, "meta": meta or {},
+                "created_at": _now_iso(),
+            }).execute()
+        except Exception:
+            # Retorna False em vez de propagar: o chat já tem a resposta pronta e
+            # o protocolo do DataStore é `bool` (o LocalStore também devolve).
+            return False
+        # `.eq("user_id", ...)`: sem isso o update tocava a conversa de outro
+        # usuário que tivesse o mesmo id.
+        self._t("conversations").update({"updated_at": _now_iso()})\
+            .eq("id", conversation_id).eq("user_id", user_id).execute()
+        return True
 
     def list_messages(self, user_id: str, conversation_id: str) -> List[Dict[str, Any]]:
         return self._t("messages").select("*").eq("conversation_id", conversation_id).eq("user_id", user_id)\
@@ -538,6 +620,69 @@ class SupabaseStore(DataStore):
         self._t("messages").delete().eq("conversation_id", conversation_id).execute()
         self._t("conversations").delete().eq("id", conversation_id).eq("user_id", user_id).execute()
         return True
+
+    def update_conversation(self, user_id: str, conversation_id: str, patch: Dict[str, Any]) -> bool:
+        owned = self._t("conversations").select("id").eq("id", conversation_id).eq("user_id", user_id).execute().data
+        if not owned:
+            return False
+        payload = {k: v for k, v in patch.items() if k not in ("id", "user_id", "created_at", "message_count")}
+        payload["updated_at"] = _now_iso()
+        self._t("conversations").update(payload).eq("id", conversation_id).eq("user_id", user_id).execute()
+        return True
+
+    # ---- eventos (calendário) — tabela public.calendar_events ----
+    _EVENT_COLUMNS = {
+        "date": "event_date",
+        "time": "event_time",
+        "durationMin": "duration_min",
+        "agentId": "agent_id",
+        "remind": "remind_min",
+        "createdAt": "created_at",
+    }
+
+    def list_events(self, user_id: str) -> List[Dict[str, Any]]:
+        rows = self._t("calendar_events").select("*").eq("user_id", user_id).execute().data
+        out: List[Dict[str, Any]] = []
+        for r in rows:
+            row = dict(r)
+            row["date"] = row.pop("event_date", "") or ""
+            row["time"] = row.pop("event_time", "") or "09:00"
+            row["durationMin"] = row.pop("duration_min", 60)
+            row["agentId"] = row.pop("agent_id", "nemo")
+            row["remind"] = row.pop("remind_min", 15)
+            row["createdAt"] = self._ms(row.pop("created_at", 0))
+            row.setdefault("description", "")
+            row.setdefault("category", "outro")
+            out.append(row)
+        out.sort(key=lambda e: (e.get("date", ""), e.get("time", "")))
+        return out
+
+    def save_event(self, user_id: str, event: Dict[str, Any]) -> None:
+        payload: Dict[str, Any] = {
+            "user_id": user_id,
+            "title": event.get("title") or "Sem título",
+            "description": event.get("description") or "",
+            "event_date": event.get("date") or None,
+            "event_time": event.get("time") or "09:00",
+            "duration_min": int(event.get("durationMin") or 60),
+            "category": event.get("category") or "outro",
+            "agent_id": event.get("agentId") or "nemo",
+            "remind_min": int(event.get("remind") or 0),
+        }
+        if payload["event_date"] is None:
+            raise ValueError("Evento sem data (date) não pode ser salvo.")
+        payload["created_at"] = self._iso(event.get("createdAt") or _now_ms())
+        if event.get("id"):
+            owned = self._t("calendar_events").select("id").eq("id", event["id"]).eq("user_id", user_id).execute().data
+            if owned:
+                self._t("calendar_events").update(payload).eq("id", event["id"]).eq("user_id", user_id).execute()
+                return
+            payload["id"] = event["id"]
+        self._t("calendar_events").upsert(payload, on_conflict="id").execute()
+
+    def delete_event(self, user_id: str, event_id: str) -> bool:
+        data = self._t("calendar_events").delete().eq("id", event_id).eq("user_id", user_id).execute().data
+        return bool(data)
 
     # ---- perfil do usuário (profiles) ----
     _PROFILE_MAP = {"avatar": "avatar_url", "default_agent": None, "preferences": None}
@@ -630,7 +775,7 @@ class SupabaseStore(DataStore):
 
     def save_task(self, user_id: str, task: Dict[str, Any]) -> None:
         payload = {"user_id": user_id, **{k: v for k, v in task.items() if k not in ("user_id", "id")}}
-        for col in ("created_at", "due_date", "done_at"):
+        for col in ("created_at", "updated_at", "due_date", "done_at"):
             if col in payload:
                 payload[col] = self._iso(payload.get(col))
         data = self._t("tasks").select("id").eq("id", task.get("id", "")).eq("user_id", user_id).execute().data
