@@ -237,6 +237,12 @@ class LocalStore(DataStore):
                 return True
         return False
 
+    def conversation_belongs_to(self, user_id: str, conversation_id: str) -> bool:
+        if not conversation_id:
+            return False
+        convs = _read_json(self._f(user_id, "conversations.json"), [])
+        return any(c.get("id") == conversation_id for c in convs)
+
     # ---- eventos ----
     def list_events(self, user_id: str) -> List[Dict[str, Any]]:
         events = _read_json(self._f(user_id, "events.json"), [])

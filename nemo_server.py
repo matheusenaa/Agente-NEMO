@@ -2244,6 +2244,24 @@ def conversations_create(req: ConversationRequest, request: Request) -> Dict[str
     return {"ok": True, "conversation": conv}
 
 
+@app.put("/api/nemo/conversations/{conversation_id}")
+def conversations_update(conversation_id: str, request: Request, patch: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
+    """Atualiza metadados da conversa (título). Chamado pela camada offline do
+    cliente; sem este endpoint o sync de `conversations/update` recebia 405 e a
+    alteração ficava só no dispositivo."""
+    user = _require_user(request)
+    allowed = {k: v for k, v in patch.items() if k in ("title", "agent_id")}
+    if not allowed:
+        raise HTTPException(status_code=400, detail="Nada para atualizar.")
+    updated = DATA_STORE.update_conversation(user["id"], conversation_id, allowed)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Conversa não encontrada.")
+    for c in DATA_STORE.list_conversations(user["id"]):
+        if c.get("id") == conversation_id:
+            return {"ok": True, "conversation": c}
+    return {"ok": True, "conversation": {**allowed, "id": conversation_id}}
+
+
 def _valid_conversation_id(conversation_id: str) -> bool:
     """`conversations/None/messages` não é erro do banco: é cliente mandando lixo.
 
